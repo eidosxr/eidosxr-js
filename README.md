@@ -22,15 +22,15 @@ npm install @oceanum/eidos
 ### Basic Usage
 
 ```javascript
-import { embed } from '@oceanum/eidos';
+import { embed } from "@oceanum/eidos";
 
 // Define your EIDOS specification
 const spec = {
-  id: 'my-app',
-  name: 'My Visualization',
+  id: "my-app",
+  name: "My Visualization",
   root: {
-    id: 'root',
-    nodeType: 'world',
+    id: "root",
+    nodeType: "world",
     children: [],
   },
   data: [],
@@ -38,32 +38,32 @@ const spec = {
 };
 
 // Embed in a container element
-const container = document.getElementById('eidos-container');
+const container = document.getElementById("eidos-container");
 const eidos = await embed(container, spec, (event) => {
-  console.log('Received event:', event);
+  console.log("Received event:", event);
 });
 
 // Mutate the spec naturally - changes propagate automatically
-eidos.name = 'Updated Visualization';
+eidos.name = "Updated Visualization";
 eidos.root.children.push({
-  id: 'layer-1',
-  nodeType: 'worldlayer',
-  layerType: 'track',
+  id: "layer-1",
+  nodeType: "worldlayer",
+  layerType: "track",
 });
 ```
 
 ## Framework Integration
 
-- [React Integration](./docs/react.md) - Hooks, components, and patterns
-- [Vue.js Integration](./docs/vue.md) - Composition API and component examples
-- [Svelte Integration](./docs/svelte.md) - Stores and reactive patterns
-- [Vanilla JavaScript](./docs/vanilla.md) - Pure JavaScript examples
+- [React Integration](./docs/eidos/react.md) - Hooks, components, and patterns
+- [Vue.js Integration](./docs/eidos/vue.md) - Composition API and component examples
+- [Svelte Integration](./docs/eidos/svelte.md) - Stores and reactive patterns
+- [Vanilla JavaScript](./docs/eidos/vanilla.md) - Pure JavaScript examples
 
 ## API Reference
 
-- [Core API](./docs/api.md) - Complete API documentation
-- [Events](./docs/events.md) - Event handling and communication
-- [Validation](./docs/validation.md) - Schema validation details
+- [Core API](./docs/eidos/api.md) - Complete API documentation
+- [Events](./docs/eidos/events.md) - Event handling and communication
+- [Validation](./docs/eidos/validation.md) - Schema validation details
 
 ## Examples
 
