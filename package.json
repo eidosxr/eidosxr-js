@@ -1,13 +1,14 @@
 {
   "name": "eidosxr-js",
-  "private": true,
-  "description": "JavaScript/TypeScript SDK for EIDOS \u2014 spec model, validation and embeddable renderer client",
+  "private": false,
   "workspaces": [
     "packages/*"
   ],
   "scripts": {
     "build": "npm run build --workspaces",
-    "test": "vitest run"
+    "publish": "npm publish --workspaces",
+    "test": "vitest run",
+    "prepublishOnly": "npm run build"
   },
   "devDependencies": {
     "vitest": "^4.0.10",

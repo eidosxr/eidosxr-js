@@ -34,5 +34,8 @@
     "type": "git",
     "url": "git+https://github.com/eidosxr/eidosxr-js.git",
     "directory": "packages/api"
+  },
+  "publishConfig": {
+    "access": "public"
   }
 }
