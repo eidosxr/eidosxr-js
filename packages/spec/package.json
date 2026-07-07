@@ -1,0 +1,31 @@
+{
+  "name": "@eidosxr/spec",
+  "private": false,
+  "version": "0.11.1",
+  "type": "module",
+  "main": "./dist/index.js",
+  "files": [
+    "dist/"
+  ],
+  "scripts": {
+    "generate-types": "node ./scripts/generate-interfaces.js",
+    "build": "vite build",
+    "prepublishOnly": "npm run build"
+  },
+  "dependencies": {
+    "ajv": "^8.17.1",
+    "valtio": "^2.3.0"
+  },
+  "devDependencies": {
+    "json-schema-to-typescript": "^15.0.4",
+    "@vitejs/plugin-react": "^5.0.4"
+  },
+  "peerDependencies": {
+    "react": "^19.2.3"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/eidosxr/eidosxr-js.git",
+    "directory": "packages/spec"
+  }
+}
