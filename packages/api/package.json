@@ -1,0 +1,38 @@
+{
+  "name": "@eidosxr/api",
+  "private": false,
+  "version": "0.1.0",
+  "description": "TypeScript client for the EIDOS platform API (spec-api + zarr-ingestion).",
+  "type": "module",
+  "main": "./dist/index.js",
+  "module": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js",
+      "require": "./dist/index.cjs"
+    }
+  },
+  "files": [
+    "dist/"
+  ],
+  "sideEffects": false,
+  "scripts": {
+    "build": "vite build && tsc -p tsconfig.lib.json",
+    "typecheck": "tsc -p tsconfig.lib.json --noEmit",
+    "gen": "openapi-typescript spec-api.openapi.json -o src/generated/spec-api.ts",
+    "prepublishOnly": "npm run build"
+  },
+  "dependencies": {
+    "fast-json-patch": "^3.1.1"
+  },
+  "devDependencies": {
+    "openapi-typescript": "^7.13.0"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/eidosxr/eidosxr-js.git",
+    "directory": "packages/api"
+  }
+}
