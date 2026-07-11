@@ -1,10 +1,9 @@
 import { createContext, useContext, useEffect, useRef, useState, ReactNode, CSSProperties } from 'react';
-import { Proxy } from 'valtio/vanilla';
 import { EidosSpec } from '../schema/interfaces';
 import { render, RenderOptions } from './render';
 
 // Context to hold the EIDOS spec proxy
-const EidosSpecContext = createContext<Proxy<EidosSpec> | null>(null);
+const EidosSpecContext = createContext<EidosSpec | null>(null);
 
 // Hook to get the spec proxy from context
 // Can be used for both reading and mutations - valtio tracks reads automatically
@@ -22,7 +21,7 @@ interface EidosProviderProps {
     initialSpec: EidosSpec;
     options?: Omit<RenderOptions, 'id'>;
     containerStyle?: CSSProperties;
-    onInitialized?: (spec: Proxy<EidosSpec>) => void;
+    onInitialized?: (spec: EidosSpec) => void;
 }
 
 // Provider component that renders EIDOS and provides spec to children
@@ -34,7 +33,7 @@ export const EidosProvider = ({
     onInitialized,
 }: EidosProviderProps) => {
     const containerRef = useRef<HTMLDivElement>(null);
-    const [spec, setSpec] = useState<Proxy<EidosSpec> | null>(null);
+    const [spec, setSpec] = useState<EidosSpec | null>(null);
     const initializedRef = useRef(false);
 
     useEffect(() => {

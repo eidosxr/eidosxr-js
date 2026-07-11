@@ -2,9 +2,20 @@
 import { NodeGlobalsPolyfillPlugin } from "@esbuild-plugins/node-globals-polyfill";
 import { defineConfig } from "vite";
 import react from "@vitejs/plugin-react";
+import dts from "vite-plugin-dts";
+import * as path from "path";
 
 export default defineConfig({
-  plugins: [react()],
+  plugins: [
+    react(),
+    // Emit .d.ts alongside the bundle. Without this the package shipped no
+    // type declarations at all, so consumers' `import type { EidosNode }`
+    // silently degraded to `any`.
+    dts({
+      entryRoot: "src",
+      tsconfigPath: path.join(__dirname, "tsconfig.lib.json"),
+    }),
+  ],
   test: {
     environment: "jsdom",
     include: ["__tests__/**/*.test.ts"],
