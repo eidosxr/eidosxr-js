@@ -2,6 +2,7 @@
   "name": "@eidosxr/spec",
   "private": false,
   "version": "0.11.1",
+  "description": "JavaScript/TypeScript SDK for EIDOS specification model, validation and embeddable renderer client",
   "type": "module",
   "main": "./dist/index.js",
   "files": [
@@ -27,5 +28,8 @@
     "type": "git",
     "url": "git+https://github.com/eidosxr/eidosxr-js.git",
     "directory": "packages/spec"
+  },
+  "publishConfig": {
+    "access": "public"
   }
 }
