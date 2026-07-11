@@ -1,10 +1,11 @@
 {
   "name": "@eidosxr/spec",
   "private": false,
-  "version": "0.11.1",
+  "version": "0.11.2",
   "description": "JavaScript/TypeScript SDK for EIDOS specification model, validation and embeddable renderer client",
   "type": "module",
   "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
   "files": [
     "dist/"
   ],
@@ -19,7 +20,9 @@
   },
   "devDependencies": {
     "json-schema-to-typescript": "^15.0.4",
-    "@vitejs/plugin-react": "^5.0.4"
+    "vite-plugin-dts": "^4.5.4",
+    "@vitejs/plugin-react": "^5.0.4",
+    "@types/react": "^19.2.3"
   },
   "peerDependencies": {
     "react": "^19.2.3"
