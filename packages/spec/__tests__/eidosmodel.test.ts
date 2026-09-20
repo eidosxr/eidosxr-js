@@ -23,6 +23,13 @@ const schemas: Record<string, object> = {
       id: { type: "string" },
       name: { type: "string" },
       root: { $ref: CHILD },
+      // As common.json#/$defs/currentTime: a date-time or an ISO 8601 duration.
+      currentTime: {
+        oneOf: [
+          { type: "string", format: "date-time" },
+          { type: "string", pattern: "^-?P" },
+        ],
+      },
     },
   },
   [CHILD]: {
@@ -79,6 +86,21 @@ describe("validateSchema()", () => {
     ).resolves.toBe(true);
     // The $ref child schema must have been fetched through the loader.
     expect(goodFetch).toHaveBeenCalledWith(CHILD);
+  });
+
+  it("checks formats, so a duration is not also taken for a date-time", async () => {
+    // With `format` unchecked, "PT0H" satisfied both oneOf branches and a
+    // valid spec was rejected ("must match exactly one schema in oneOf").
+    vi.stubGlobal("fetch", goodFetch);
+    const { validateSchema } = await import("../src/lib/eidosmodel");
+    const spec = { id: "ok", name: "OK" };
+    await expect(validateSchema({ ...spec, currentTime: "PT0H" })).resolves.toBe(true);
+    await expect(
+      validateSchema({ ...spec, currentTime: "2026-01-01T00:00:00Z" }),
+    ).resolves.toBe(true);
+    await expect(validateSchema({ ...spec, currentTime: "yesterday" })).rejects.toThrow(
+      /EIDOS spec validation failed/,
+    );
   });
 
   it("rejects a spec that violates the schema — validation is not a no-op", async () => {
