@@ -1,0 +1,32 @@
+name: Test
+
+# Runs the tests and the build for every push to main and every pull request.
+# publish.yml calls it too, so nothing is published from a failing tree.
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_call:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    name: test (Node ${{ matrix.node }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        node: ['22', '24']
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: ${{ matrix.node }}
+          cache: npm
+      - run: npm ci
+      - run: npm test
+      # The release gate used by publish.yml.
+      - run: node --test .github/scripts/select-packages.test.mjs
+      - run: npm run build
