@@ -4,6 +4,7 @@ import crypto from 'crypto';
 import https from 'https';
 import fs from 'fs';
 import { fileURLToPath } from 'url';
+import { ROOT_SCHEMA_URL } from './schema-version.js';
 
 /**
  * Schema bundler for EIDOS schemas
@@ -16,12 +17,42 @@ import { fileURLToPath } from 'url';
  * - Exclude Vega: Replace Vega/Vega-Lite schemas with simple PlotSpec placeholder
  */
 
+/**
+ * Remap a canonical https://schemas.oceanum.io/... reference to a local schema
+ * tree (for reading only), so generation reflects local edits. `base` is the
+ * local eidos schema directory, e.g. <repo>/packages/schemas/src/eidos.
+ *
+ * The published EIDOS paths carry the schema version (/eidos/v0.12/data.json)
+ * but a checkout has no version directory, so the version segment is dropped.
+ * Shared schemas (/geojson.json, /datamesh/...) are not versioned and map as
+ * they are. Falls back to the original path when no local file exists.
+ * @param {string} schemaPath
+ * @param {string | undefined} base
+ * @returns {string}
+ */
+export function localizeSchemaPath(schemaPath, base) {
+  const CANONICAL = 'https://schemas.oceanum.io';
+  if (!base || base.startsWith('http') || !schemaPath.startsWith(CANONICAL)) {
+    return schemaPath;
+  }
+  // base = <repo>/packages/schemas/src/eidos -> srcRoot = <repo>/packages/schemas/src
+  const eidosDir = base.replace(/\/+$/, '');
+  const srcRoot = eidosDir.replace(/\/eidos$/, '');
+  const rel = schemaPath
+    .slice(CANONICAL.length)
+    .split('#')[0] // /eidos/v0.12/data.json
+    .replace(/^\/eidos\/v\d+\.\d+\//, '/eidos/'); // /eidos/data.json
+  const candidate = srcRoot + rel;
+  return fs.existsSync(candidate) ? candidate : schemaPath;
+}
+
 class SchemaBundler {
   constructor() {
     this.definitions = new Map(); // newKey -> definition
     this.keyMapping = new Map(); // original ref -> new key
     this.seenKeys = new Set(); // track used keys to avoid collisions
     this.definitionHashes = new Map(); // hash -> key for deduplication by content
+    this.failedRefs = []; // referenced schemas that could not be loaded
   }
 
   /**
@@ -289,38 +320,26 @@ class SchemaBundler {
   }
 
   /**
-   * When EIDOS_SCHEMAS_URL points at a local directory, remap canonical
-   * https://schemas.oceanum.io/... references to that local tree (for reading
-   * only) so generation reflects local edits. Falls back to the original path
-   * when no local file exists (e.g. external geojson/datamesh schemas).
-   * @param {string} schemaPath
-   * @returns {string}
-   */
-  localizeSchemaPath(schemaPath) {
-    const base = process.env.EIDOS_SCHEMAS_URL;
-    const CANONICAL = 'https://schemas.oceanum.io';
-    if (!base || base.startsWith('http') || !schemaPath.startsWith(CANONICAL)) {
-      return schemaPath;
-    }
-    // base = <repo>/packages/schemas/src/eidos -> srcRoot = <repo>/packages/schemas/src
-    const eidosDir = base.replace(/\/+$/, '');
-    const srcRoot = eidosDir.replace(/\/eidos$/, '');
-    const rel = schemaPath.slice(CANONICAL.length).split('#')[0]; // /eidos/data.json
-    const candidate = srcRoot + rel;
-    return fs.existsSync(candidate) ? candidate : schemaPath;
-  }
-
-  /**
    * Fetch a schema from URL or file path
    * @param {string} schemaPath - URL or file path
    * @returns {Promise<Object>} - Parsed schema
    */
   async fetchSchema(rawSchemaPath) {
-    const schemaPath = this.localizeSchemaPath(rawSchemaPath);
+    const schemaPath = localizeSchemaPath(
+      rawSchemaPath,
+      process.env.EIDOS_SCHEMAS_URL,
+    );
     if (schemaPath.startsWith('http://') || schemaPath.startsWith('https://')) {
       return new Promise((resolve, reject) => {
         https
           .get(schemaPath, (res) => {
+            // A version-specific path that is not published answers 404 with
+            // a non-JSON body; say so rather than failing to parse it.
+            if (res.statusCode !== 200) {
+              res.resume();
+              reject(new Error(`HTTP ${res.statusCode} for ${schemaPath}`));
+              return;
+            }
             let data = '';
             res.on('data', (chunk) => (data += chunk));
             res.on('end', () => {
@@ -390,6 +409,7 @@ class SchemaBundler {
             }
           } catch (err) {
             console.warn(`Failed to fetch ${refUrl}: ${err.message}`);
+            this.failedRefs.push(`${refUrl}: ${err.message}`);
           }
         }
       } else if (typeof value === 'object') {
@@ -511,9 +531,10 @@ class SchemaBundler {
   /**
    * Bundle a schema from a root schema URL/path
    * @param {string} rootSchemaPath - Path or URL to the root schema
+   * @param {string} [expectedId] - The $id the root schema must carry
    * @returns {Promise<Object>} - Bundled schema
    */
-  async bundle(rootSchemaPath) {
+  async bundle(rootSchemaPath, expectedId) {
     console.log(`📦 Starting schema bundling from: ${rootSchemaPath}`);
 
     try {
@@ -522,6 +543,13 @@ class SchemaBundler {
         '📥 Loading root schema and collecting external references...',
       );
       const rootSchema = await this.fetchSchema(rootSchemaPath);
+      // The $id carries the schema version, so this catches bundling another
+      // version's schemas (e.g. a local checkout that has moved on).
+      if (expectedId && rootSchema.$id !== expectedId) {
+        throw new Error(
+          `Wrong schema version: expected $id ${expectedId}, found ${rootSchema.$id}`,
+        );
+      }
       const baseUrl = rootSchemaPath.startsWith('http')
         ? rootSchemaPath
         : new URL(rootSchemaPath, import.meta.url).href;
@@ -529,6 +557,13 @@ class SchemaBundler {
       const allSchemas = new Map();
       allSchemas.set(baseUrl, rootSchema);
       await this.collectSchemas(rootSchema, baseUrl, allSchemas);
+
+      // A schema that cannot be loaded would leave its types as `any`.
+      if (this.failedRefs.length > 0) {
+        throw new Error(
+          `Could not load ${this.failedRefs.length} referenced schema(s):\n  ${this.failedRefs.join('\n  ')}`,
+        );
+      }
 
       console.log(`Collected ${allSchemas.size} schemas`);
 
@@ -676,11 +711,12 @@ class SchemaBundler {
 /**
  * Export function for bundling schemas
  * @param {string} rootSchemaPath - Path or URL to the root schema
+ * @param {string} [expectedId] - The $id the root schema must carry
  * @returns {Promise<Object>} - Bundled schema
  */
-export async function bundle(rootSchemaPath) {
+export async function bundle(rootSchemaPath, expectedId) {
   const bundler = new SchemaBundler();
-  return await bundler.bundle(rootSchemaPath);
+  return await bundler.bundle(rootSchemaPath, expectedId);
 }
 
 // CLI support - run bundler if called directly
@@ -688,8 +724,7 @@ if (
   import.meta.url === `file://${process.argv[1]}` ||
   import.meta.url.endsWith(process.argv[1])
 ) {
-  const rootSchema =
-    process.argv[2] || 'https://schemas.oceanum.io/eidos/root.json';
+  const rootSchema = process.argv[2] || ROOT_SCHEMA_URL;
   const outputFile = process.argv[3];
 
   console.log('🚀 Running schema bundler CLI...');

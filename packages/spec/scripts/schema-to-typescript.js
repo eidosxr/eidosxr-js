@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 
 import { bundle } from "./schema-bundler.js";
+import { ROOT_SCHEMA_URL } from "./schema-version.js";
 import fs from "fs";
 import path from "path";
 import { fileURLToPath } from "url";
@@ -18,7 +19,6 @@ const __dirname = path.dirname(__filename);
  */
 class SchemaToTypeScript {
   constructor() {
-    this.schemasUrl = "https://schemas.oceanum.io/eidos";
     this.outputDir = path.resolve(__dirname, "../src/schema");
     this.outputFile = path.join(this.outputDir, "interfaces.ts");
     this.processedRefs = new Set(); // Track processed references to avoid duplicates
@@ -27,9 +27,10 @@ class SchemaToTypeScript {
   /**
    * Convert a bundled schema to TypeScript interfaces
    * @param {string} rootSchemaPath - Path or URL to the root schema
+   * @param {string} [expectedId] - The $id the root schema must carry
    * @returns {Promise<void>}
    */
-  async convertToTypeScript(rootSchemaPath) {
+  async convertToTypeScript(rootSchemaPath, expectedId) {
     console.log("🚀 Converting EIDOS schemas to TypeScript interfaces...");
 
     // Ensure output directory exists
@@ -41,7 +42,7 @@ class SchemaToTypeScript {
       console.log(`📥 Bundling schemas from: ${rootSchemaPath}`);
       
       // Use our custom schema bundler to bundle all schemas into one
-      const bundledSchema = await bundle(rootSchemaPath);
+      const bundledSchema = await bundle(rootSchemaPath, expectedId);
       
       console.log("📦 Schema bundling completed successfully!");
 
@@ -65,7 +66,7 @@ class SchemaToTypeScript {
  * These interfaces can be used for type validation and IDE support.
  * 
  * Do not modify this file directly - regenerate using:
- * npx nx run eidos:generate-types
+ * npm run generate-types -w @eidosxr/spec
  */
 
 `;
@@ -582,23 +583,24 @@ export interface ${name} {
 /**
  * Export function for converting schemas to TypeScript
  * @param {string} rootSchemaPath - Path or URL to the root schema
+ * @param {string} [expectedId] - The $id the root schema must carry
  * @returns {Promise<void>}
  */
-export async function convertToTypeScript(rootSchemaPath) {
+export async function convertToTypeScript(rootSchemaPath, expectedId) {
   const converter = new SchemaToTypeScript();
-  return await converter.convertToTypeScript(rootSchemaPath);
+  return await converter.convertToTypeScript(rootSchemaPath, expectedId);
 }
 
 // CLI support - run converter if called directly
 if (import.meta.url === `file://${process.argv[1]}` || 
     import.meta.url.endsWith(process.argv[1])) {
   
-  const rootSchema = process.argv[2] || 'https://schemas.oceanum.io/eidos/root.json';
+  const rootSchema = process.argv[2] || ROOT_SCHEMA_URL;
   
   console.log('🚀 Running schema to TypeScript converter CLI...');
   
   try {
-    await convertToTypeScript(rootSchema);
+    await convertToTypeScript(rootSchema, ROOT_SCHEMA_URL);
     console.log('✅ Schema to TypeScript conversion completed successfully!');
   } catch (error) {
     console.error('❌ CLI conversion failed:', error);

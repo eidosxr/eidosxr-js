@@ -1,6 +1,10 @@
 import Ajv, { ValidateFunction } from "ajv";
+import addFormats from "ajv-formats";
+import { MINOR_VERSION } from "./version";
 
-const ROOT_SCHEMA = "https://schemas.oceanum.io/eidos/root.json";
+// The schemas are published per EIDOS version. The unversioned path is not
+// kept in step with them, so validate against this package's own version.
+const ROOT_SCHEMA = `https://schemas.oceanum.io/eidos/v${MINOR_VERSION}/root.json`;
 let validator: ValidateFunction | null = null;
 
 const loadSchema = async (uri: string) => {
@@ -24,6 +28,10 @@ const validateSchema = async (spec: any): Promise<boolean> => {
       strict: false, // Allow additional properties for flexibility
       loadSchema,
     });
+    // Without this ajv ignores `format`, and the schemas rely on it to tell
+    // values apart: currentTime is oneOf a date-time or a duration, so an
+    // unchecked date-time let "PT0H" match both and the spec was rejected.
+    addFormats(ajv);
 
     // Compile the validator
     validator = await ajv.compileAsync(schema);

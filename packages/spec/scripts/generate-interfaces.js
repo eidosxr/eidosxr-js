@@ -1,6 +1,8 @@
 #!/usr/bin/env node
 
 import { convertToTypeScript } from './schema-to-typescript.js';
+import { ROOT_SCHEMA_URL, SCHEMAS_URL } from './schema-version.js';
+import fs from 'fs';
 import path from 'path';
 import { fileURLToPath } from 'url';
 
@@ -10,24 +12,44 @@ const __dirname = path.dirname(__filename);
 
 class EidosInterfaceGenerator {
   constructor() {
-    // Defaults to the published schemas; set EIDOS_SCHEMAS_URL to a local
-    // directory (e.g. packages/schemas/src/eidos) to generate from local edits.
-    this.schemasUrl =
-      process.env.EIDOS_SCHEMAS_URL || 'https://schemas.oceanum.io/eidos';
+    // Defaults to the published schemas of this package's EIDOS version; set
+    // EIDOS_SCHEMAS_URL to a local directory (e.g. packages/schemas/src/eidos)
+    // to generate from local edits.
+    this.schemasUrl = process.env.EIDOS_SCHEMAS_URL || SCHEMAS_URL;
     this.outputDir = path.resolve(__dirname, '../src/schema');
+  }
+
+  // A local schema directory must be the absolute path of an `eidos` schema
+  // directory. Anything else maps no reference to a local file, and the
+  // generator would read the published schemas without saying so.
+  checkLocalSchemas() {
+    const base = process.env.EIDOS_SCHEMAS_URL;
+    if (!base || base.startsWith('http')) return;
+    const dir = base.replace(/\/+$/, '');
+    if (
+      !path.isAbsolute(dir) ||
+      path.basename(dir) !== 'eidos' ||
+      !fs.existsSync(path.join(dir, 'root.json'))
+    ) {
+      throw new Error(
+        `EIDOS_SCHEMAS_URL must be the absolute path of an eidos schema directory holding root.json, e.g. /path/to/eidos/packages/schemas/src/eidos (got ${base})`,
+      );
+    }
   }
 
   async generate() {
     console.log('🚀 Generating TypeScript interfaces from EIDOS schemas...');
 
     try {
+      this.checkLocalSchemas();
+
       // Determine the root schema URL
       const rootSchemaPath = `${this.schemasUrl}/root.json`;
 
       console.log(`📥 Using root schema: ${rootSchemaPath}`);
 
-      // Use our custom schema-to-typescript converter
-      await convertToTypeScript(rootSchemaPath);
+      // Wherever they are read from, the schemas must be this version's.
+      await convertToTypeScript(rootSchemaPath, ROOT_SCHEMA_URL);
 
       console.log('✅ Interface generation completed successfully!');
       console.log(
