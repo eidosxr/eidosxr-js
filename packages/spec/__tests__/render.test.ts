@@ -25,6 +25,7 @@ vi.mock("../src/lib/eidosmodel", () => ({
   validateSchema: vi.fn().mockResolvedValue(true),
 }));
 
+import { validateSchema } from "../src/lib/eidosmodel";
 import { render } from "../src/lib/render";
 
 const makeSpec = () => ({
@@ -78,6 +79,28 @@ describe("render()", () => {
     // performs — the old code posted the raw valtio proxy, which throws.
     expect(() => structuredClone(message.payload)).not.toThrow();
 
+    view.destroy();
+  });
+
+  it("cleans up the container when the spec is rejected, allowing retry", async () => {
+    const el = document.createElement("div");
+    document.body.appendChild(el);
+
+    // Any rejection: an invalid spec, or schemas that could not be loaded.
+    vi.mocked(validateSchema).mockRejectedValueOnce(
+      new Error("Loading error: 404"),
+    );
+    await expect(render(el, makeSpec())).rejects.toThrow(
+      "Invalid Eidos Spec: Loading error: 404",
+    );
+    expect(el.getAttribute("data-eidos-initialized")).toBeNull();
+
+    // A retry in the same container must not hit the already-mounted guard.
+    const retry = render(el, makeSpec());
+    const iframe = await waitForIframe(el);
+    iframe.dispatchEvent(new Event("load"));
+    const view = await retry;
+    expect(view.iframe).toBe(iframe);
     view.destroy();
   });
 

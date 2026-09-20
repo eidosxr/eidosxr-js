@@ -42,17 +42,9 @@ class SchemaToTypeScript {
       console.log(`📥 Bundling schemas from: ${rootSchemaPath}`);
       
       // Use our custom schema bundler to bundle all schemas into one
-      const bundledSchema = await bundle(rootSchemaPath);
+      const bundledSchema = await bundle(rootSchemaPath, expectedId);
       
       console.log("📦 Schema bundling completed successfully!");
-
-      // The $id carries the schema version, so this catches generating from
-      // another version's schemas (e.g. a local checkout that has moved on).
-      if (expectedId && bundledSchema.$id !== expectedId) {
-        throw new Error(
-          `Wrong schema version: expected $id ${expectedId}, found ${bundledSchema.$id}`
-        );
-      }
 
       if (!bundledSchema.$defs || Object.keys(bundledSchema.$defs).length === 0) {
         throw new Error("No $defs found in bundled schema");
@@ -608,7 +600,7 @@ if (import.meta.url === `file://${process.argv[1]}` ||
   console.log('🚀 Running schema to TypeScript converter CLI...');
   
   try {
-    await convertToTypeScript(rootSchema);
+    await convertToTypeScript(rootSchema, ROOT_SCHEMA_URL);
     console.log('✅ Schema to TypeScript conversion completed successfully!');
   } catch (error) {
     console.error('❌ CLI conversion failed:', error);

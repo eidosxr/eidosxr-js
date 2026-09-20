@@ -12,7 +12,7 @@
   "scripts": {
     "generate-types": "node ./scripts/generate-interfaces.js",
     "build": "vite build",
-    "prepublishOnly": "npm run build"
+    "prepublishOnly": "node ./scripts/check-release-urls.js && npm run build"
   },
   "dependencies": {
     "ajv": "^8.17.1",

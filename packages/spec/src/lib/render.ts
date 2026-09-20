@@ -73,6 +73,9 @@ const render = async (
   try {
     await validateSchema(spec);
   } catch (e: any) {
+    // Clear the marker so the container can be retried; otherwise every later
+    // render() in this element is refused as already mounted.
+    element.removeAttribute('data-eidos-initialized');
     throw new Error(`Invalid Eidos Spec: ${e.message}`);
   }
 

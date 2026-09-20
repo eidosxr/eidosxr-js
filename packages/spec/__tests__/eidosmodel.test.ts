@@ -7,12 +7,11 @@
  * so HTTP errors were swallowed too.
  */
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { version } from "../package.json";
+import { MINOR_VERSION } from "../src/lib/version";
 
 // The schemas are published per EIDOS version: the package's major.minor.
-const MINOR = version.split(".").slice(0, 2).join(".");
-const ROOT = `https://schemas.oceanum.io/eidos/v${MINOR}/root.json`;
-const CHILD = `https://schemas.oceanum.io/eidos/v${MINOR}/node/test-child.json`;
+const ROOT = `https://schemas.oceanum.io/eidos/v${MINOR_VERSION}/root.json`;
+const CHILD = `https://schemas.oceanum.io/eidos/v${MINOR_VERSION}/node/test-child.json`;
 
 const schemas: Record<string, object> = {
   [ROOT]: {
@@ -98,6 +97,14 @@ describe("validateSchema()", () => {
     await expect(
       validateSchema({ ...spec, currentTime: "2026-01-01T00:00:00Z" }),
     ).resolves.toBe(true);
+    // The form most EIDOS specs use: a space for the T, with a time zone.
+    await expect(
+      validateSchema({ ...spec, currentTime: "2019-01-01 00:00:00Z" }),
+    ).resolves.toBe(true);
+    // As in the renderer's validator, a date-time needs a time zone.
+    await expect(
+      validateSchema({ ...spec, currentTime: "2026-01-01T00:00:00" }),
+    ).rejects.toThrow(/EIDOS spec validation failed/);
     await expect(validateSchema({ ...spec, currentTime: "yesterday" })).rejects.toThrow(
       /EIDOS spec validation failed/,
     );

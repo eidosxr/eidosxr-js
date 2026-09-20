@@ -10,10 +10,10 @@
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { afterAll, beforeAll, describe, expect, it } from "vitest";
-import { version } from "../package.json";
-import { localizeSchemaPath } from "../scripts/schema-bundler.js";
+import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
+import { bundle, localizeSchemaPath } from "../scripts/schema-bundler.js";
 import { ROOT_SCHEMA_URL, SCHEMAS_URL } from "../scripts/schema-version.js";
+import { MINOR_VERSION } from "../src/lib/version";
 
 const HOST = "https://schemas.oceanum.io";
 
@@ -88,10 +88,50 @@ describe("localizeSchemaPath()", () => {
   });
 });
 
+describe("bundle()", () => {
+  const write = (name: string, schema: object) => {
+    const file = path.join(src, name);
+    fs.writeFileSync(file, JSON.stringify(schema));
+    return file;
+  };
+
+  beforeAll(() => {
+    vi.spyOn(console, "log").mockImplementation(() => {});
+    vi.spyOn(console, "warn").mockImplementation(() => {});
+    vi.spyOn(console, "error").mockImplementation(() => {});
+  });
+
+  afterAll(() => {
+    vi.restoreAllMocks();
+  });
+
+  it("stops when the root schema is not the version asked for", async () => {
+    const root = write("other-version.json", {
+      $id: `${HOST}/eidos/v9.9/root.json`,
+      type: "object",
+    });
+    await expect(bundle(root, `${HOST}/eidos/v0.12/root.json`)).rejects.toThrow(
+      `Wrong schema version: expected $id ${HOST}/eidos/v0.12/root.json, found ${HOST}/eidos/v9.9/root.json`,
+    );
+  });
+
+  it("stops when a referenced schema cannot be loaded", async () => {
+    // Left as a warning, the reference would become `any` in the interfaces.
+    const root = write("dangling.json", {
+      type: "object",
+      properties: { child: { $ref: "no-such-schema.json" } },
+    });
+    await expect(bundle(root)).rejects.toThrow(
+      /Could not load 1 referenced schema\(s\):[\s\S]*no-such-schema\.json/,
+    );
+  });
+});
+
 describe("schema version", () => {
-  it("is the major.minor of the package version", () => {
-    const minor = version.split(".").slice(0, 2).join(".");
-    expect(SCHEMAS_URL).toBe(`${HOST}/eidos/v${minor}`);
-    expect(ROOT_SCHEMA_URL).toBe(`${HOST}/eidos/v${minor}/root.json`);
+  it("is the same for the generator scripts and the package", () => {
+    // The scripts read package.json; the package imports it. Both must agree.
+    expect(SCHEMAS_URL).toBe(`${HOST}/eidos/v${MINOR_VERSION}`);
+    expect(ROOT_SCHEMA_URL).toBe(`${SCHEMAS_URL}/root.json`);
+    expect(SCHEMAS_URL).toMatch(/\/eidos\/v\d+\.\d+$/);
   });
 });

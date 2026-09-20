@@ -52,6 +52,7 @@ class SchemaBundler {
     this.keyMapping = new Map(); // original ref -> new key
     this.seenKeys = new Set(); // track used keys to avoid collisions
     this.definitionHashes = new Map(); // hash -> key for deduplication by content
+    this.failedRefs = []; // referenced schemas that could not be loaded
   }
 
   /**
@@ -408,6 +409,7 @@ class SchemaBundler {
             }
           } catch (err) {
             console.warn(`Failed to fetch ${refUrl}: ${err.message}`);
+            this.failedRefs.push(`${refUrl}: ${err.message}`);
           }
         }
       } else if (typeof value === 'object') {
@@ -529,9 +531,10 @@ class SchemaBundler {
   /**
    * Bundle a schema from a root schema URL/path
    * @param {string} rootSchemaPath - Path or URL to the root schema
+   * @param {string} [expectedId] - The $id the root schema must carry
    * @returns {Promise<Object>} - Bundled schema
    */
-  async bundle(rootSchemaPath) {
+  async bundle(rootSchemaPath, expectedId) {
     console.log(`📦 Starting schema bundling from: ${rootSchemaPath}`);
 
     try {
@@ -540,6 +543,13 @@ class SchemaBundler {
         '📥 Loading root schema and collecting external references...',
       );
       const rootSchema = await this.fetchSchema(rootSchemaPath);
+      // The $id carries the schema version, so this catches bundling another
+      // version's schemas (e.g. a local checkout that has moved on).
+      if (expectedId && rootSchema.$id !== expectedId) {
+        throw new Error(
+          `Wrong schema version: expected $id ${expectedId}, found ${rootSchema.$id}`,
+        );
+      }
       const baseUrl = rootSchemaPath.startsWith('http')
         ? rootSchemaPath
         : new URL(rootSchemaPath, import.meta.url).href;
@@ -547,6 +557,13 @@ class SchemaBundler {
       const allSchemas = new Map();
       allSchemas.set(baseUrl, rootSchema);
       await this.collectSchemas(rootSchema, baseUrl, allSchemas);
+
+      // A schema that cannot be loaded would leave its types as `any`.
+      if (this.failedRefs.length > 0) {
+        throw new Error(
+          `Could not load ${this.failedRefs.length} referenced schema(s):\n  ${this.failedRefs.join('\n  ')}`,
+        );
+      }
 
       console.log(`Collected ${allSchemas.size} schemas`);
 
@@ -694,11 +711,12 @@ class SchemaBundler {
 /**
  * Export function for bundling schemas
  * @param {string} rootSchemaPath - Path or URL to the root schema
+ * @param {string} [expectedId] - The $id the root schema must carry
  * @returns {Promise<Object>} - Bundled schema
  */
-export async function bundle(rootSchemaPath) {
+export async function bundle(rootSchemaPath, expectedId) {
   const bundler = new SchemaBundler();
-  return await bundler.bundle(rootSchemaPath);
+  return await bundler.bundle(rootSchemaPath, expectedId);
 }
 
 // CLI support - run bundler if called directly

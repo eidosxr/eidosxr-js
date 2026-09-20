@@ -230,7 +230,7 @@ Renders an EIDOS iframe and provides the spec proxy to all child components via 
 **Props:**
 - `initialSpec` (required): The EIDOS specification object
 - `options` (optional): Render options
-  - `renderer` (string): URL of the EIDOS renderer (default: `https://render.eidos.oceanum.io`)
+  - `renderer` (string): URL of the EIDOS renderer (default: the renderer of this package's EIDOS version, e.g. `https://render.eidos.oceanum.io/v0.12/index.html`)
   - `eventListener` (function): Callback for events from the renderer
   - `authToken` (string | function): Authentication token for data fetching
 - `containerStyle` (optional): CSS styles for the iframe container (default: `{ width: '100%', height: '100%', position: 'absolute' }`)
@@ -326,6 +326,8 @@ EIDOS 0.12. The major.minor of the package version selects both the default
 renderer, `https://render.eidos.oceanum.io/v0.12/`, and the schemas a spec is
 validated against, `https://schemas.oceanum.io/eidos/v0.12/`. The schemas are
 published per version; the unversioned schema path is not kept in step with them.
+Both must therefore be published before the package is: `npm publish` first checks
+that they are (`scripts/check-release-urls.js`).
 
 ### Regenerating the interfaces (development)
 
@@ -345,8 +347,8 @@ EIDOS_SCHEMAS_URL=/path/to/eidos/packages/schemas/src/eidos npm run generate-typ
 ```
 
 Either way the generator stops, leaving `interfaces.ts` as it was, if the root
-schema's `$id` is not this package's version. To move to a new EIDOS version, bump
-the package version first.
+schema's `$id` is not this package's version or if a schema it refers to cannot be
+loaded. To move to a new EIDOS version, bump the package version first.
 
 ## Examples
 
