@@ -1,0 +1,73 @@
+name: Publish to npm
+
+# Publishes to npm when a version tag (v0.12.0, v1.2.3, ...) is pushed.
+# Uses npm Trusted Publishing (OIDC): no npm token is stored anywhere.
+#
+# The packages are versioned independently, so the tag names a version, not a
+# package: v0.12.0 publishes every workspace package whose package.json version
+# is 0.12.0 and that is not on npm yet. To release, bump the version in the
+# package's package.json, merge, then push the matching tag:
+#
+#   git tag v0.12.0 && git push origin v0.12.0
+#
+# Push the tag on its own: GitHub creates no event, so runs nothing, when more
+# than three tags are pushed at once.
+#
+# One-time setup on npmjs.com, for EACH package (Settings > Trusted Publisher >
+# GitHub Actions): organization `eidosxr`, repository `eidosxr-js`, workflow
+# filename `publish.yml`, environment `npm`, and allow `npm publish` (newer
+# configurations allow only `npm stage publish` unless that is ticked).
+on:
+  push:
+    tags: ['v*.*.*']
+
+jobs:
+  # Runs first, outside the npm environment, so a tag that matches nothing
+  # fails in seconds instead of after the tests and any environment approval.
+  select:
+    name: Select the packages at the tagged version
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    outputs:
+      packages: ${{ steps.select.outputs.packages }}
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: '24'
+          package-manager-cache: false
+      - id: select
+        run: node .github/scripts/select-packages.mjs "$GITHUB_REF_NAME"
+
+  test:
+    needs: select
+    uses: ./.github/workflows/test.yml
+    permissions:
+      contents: read
+
+  publish:
+    name: Build and publish
+    needs: [select, test]
+    runs-on: ubuntu-latest
+    environment: npm
+    permissions:
+      contents: read
+      id-token: write # OIDC token for npm Trusted Publishing
+    steps:
+      - uses: actions/checkout@v7
+      # Trusted publishing needs npm >= 11.5.1. Node 24 bundles it; Node 22 does not.
+      - uses: actions/setup-node@v7
+        with:
+          node-version: '24'
+          registry-url: 'https://registry.npmjs.org'
+          package-manager-cache: false
+      - run: npm ci
+      # prepublishOnly builds each package. Provenance is attached automatically.
+      - name: Publish
+        env:
+          PACKAGES: ${{ needs.select.outputs.packages }}
+        run: |
+          for package in $PACKAGES; do
+            npm publish --workspace "$package"
+          done
