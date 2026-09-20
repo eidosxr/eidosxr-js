@@ -1,9 +1,8 @@
 import { proxy, subscribe, snapshot, Proxy } from 'valtio/vanilla';
 import { validateSchema } from './eidosmodel';
 import { EidosSpec } from '../schema/interfaces';
-import { version } from '../../package.json';
+import { MINOR_VERSION } from './version';
 
-const MINOR_VERSION = version.split('.').slice(0, 2).join('.');
 const DEFAULT_RENDERER = `https://render.eidos.oceanum.io/v${MINOR_VERSION}/index.html`;
 
 /**

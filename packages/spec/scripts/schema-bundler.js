@@ -4,6 +4,7 @@ import crypto from 'crypto';
 import https from 'https';
 import fs from 'fs';
 import { fileURLToPath } from 'url';
+import { ROOT_SCHEMA_URL } from './schema-version.js';
 
 /**
  * Schema bundler for EIDOS schemas
@@ -15,6 +16,35 @@ import { fileURLToPath } from 'url';
  * - Rewrite Refs: Update all $ref pointers to use the new canonical $defs keys
  * - Exclude Vega: Replace Vega/Vega-Lite schemas with simple PlotSpec placeholder
  */
+
+/**
+ * Remap a canonical https://schemas.oceanum.io/... reference to a local schema
+ * tree (for reading only), so generation reflects local edits. `base` is the
+ * local eidos schema directory, e.g. <repo>/packages/schemas/src/eidos.
+ *
+ * The published EIDOS paths carry the schema version (/eidos/v0.12/data.json)
+ * but a checkout has no version directory, so the version segment is dropped.
+ * Shared schemas (/geojson.json, /datamesh/...) are not versioned and map as
+ * they are. Falls back to the original path when no local file exists.
+ * @param {string} schemaPath
+ * @param {string | undefined} base
+ * @returns {string}
+ */
+export function localizeSchemaPath(schemaPath, base) {
+  const CANONICAL = 'https://schemas.oceanum.io';
+  if (!base || base.startsWith('http') || !schemaPath.startsWith(CANONICAL)) {
+    return schemaPath;
+  }
+  // base = <repo>/packages/schemas/src/eidos -> srcRoot = <repo>/packages/schemas/src
+  const eidosDir = base.replace(/\/+$/, '');
+  const srcRoot = eidosDir.replace(/\/eidos$/, '');
+  const rel = schemaPath
+    .slice(CANONICAL.length)
+    .split('#')[0] // /eidos/v0.12/data.json
+    .replace(/^\/eidos\/v\d+\.\d+\//, '/eidos/'); // /eidos/data.json
+  const candidate = srcRoot + rel;
+  return fs.existsSync(candidate) ? candidate : schemaPath;
+}
 
 class SchemaBundler {
   constructor() {
@@ -289,38 +319,26 @@ class SchemaBundler {
   }
 
   /**
-   * When EIDOS_SCHEMAS_URL points at a local directory, remap canonical
-   * https://schemas.oceanum.io/... references to that local tree (for reading
-   * only) so generation reflects local edits. Falls back to the original path
-   * when no local file exists (e.g. external geojson/datamesh schemas).
-   * @param {string} schemaPath
-   * @returns {string}
-   */
-  localizeSchemaPath(schemaPath) {
-    const base = process.env.EIDOS_SCHEMAS_URL;
-    const CANONICAL = 'https://schemas.oceanum.io';
-    if (!base || base.startsWith('http') || !schemaPath.startsWith(CANONICAL)) {
-      return schemaPath;
-    }
-    // base = <repo>/packages/schemas/src/eidos -> srcRoot = <repo>/packages/schemas/src
-    const eidosDir = base.replace(/\/+$/, '');
-    const srcRoot = eidosDir.replace(/\/eidos$/, '');
-    const rel = schemaPath.slice(CANONICAL.length).split('#')[0]; // /eidos/data.json
-    const candidate = srcRoot + rel;
-    return fs.existsSync(candidate) ? candidate : schemaPath;
-  }
-
-  /**
    * Fetch a schema from URL or file path
    * @param {string} schemaPath - URL or file path
    * @returns {Promise<Object>} - Parsed schema
    */
   async fetchSchema(rawSchemaPath) {
-    const schemaPath = this.localizeSchemaPath(rawSchemaPath);
+    const schemaPath = localizeSchemaPath(
+      rawSchemaPath,
+      process.env.EIDOS_SCHEMAS_URL,
+    );
     if (schemaPath.startsWith('http://') || schemaPath.startsWith('https://')) {
       return new Promise((resolve, reject) => {
         https
           .get(schemaPath, (res) => {
+            // A version-specific path that is not published answers 404 with
+            // a non-JSON body; say so rather than failing to parse it.
+            if (res.statusCode !== 200) {
+              res.resume();
+              reject(new Error(`HTTP ${res.statusCode} for ${schemaPath}`));
+              return;
+            }
             let data = '';
             res.on('data', (chunk) => (data += chunk));
             res.on('end', () => {
@@ -688,8 +706,7 @@ if (
   import.meta.url === `file://${process.argv[1]}` ||
   import.meta.url.endsWith(process.argv[1])
 ) {
-  const rootSchema =
-    process.argv[2] || 'https://schemas.oceanum.io/eidos/root.json';
+  const rootSchema = process.argv[2] || ROOT_SCHEMA_URL;
   const outputFile = process.argv[3];
 
   console.log('🚀 Running schema bundler CLI...');

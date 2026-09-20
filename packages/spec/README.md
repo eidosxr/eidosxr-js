@@ -319,6 +319,35 @@ result.destroy();
 - [Events](./docs/eidos/events.md) - Event handling and communication
 - [Validation](./docs/eidos/validation.md) - Schema validation details
 
+## EIDOS version
+
+The package is numbered for the EIDOS version it targets: `@eidosxr/spec` 0.12.x is
+EIDOS 0.12. The major.minor of the package version selects both the default
+renderer, `https://render.eidos.oceanum.io/v0.12/`, and the schemas a spec is
+validated against, `https://schemas.oceanum.io/eidos/v0.12/`. The schemas are
+published per version; the unversioned schema path is not kept in step with them.
+
+### Regenerating the interfaces (development)
+
+`src/schema/interfaces.ts` is generated from the EIDOS JSON schemas of that same
+version:
+
+```bash
+npm run generate-types -w @eidosxr/spec
+```
+
+To generate from schemas that are not published yet, point `EIDOS_SCHEMAS_URL` at
+the schema directory (an absolute path) of a checkout of the
+[eidos monorepo](https://github.com/eidosxr/eidos):
+
+```bash
+EIDOS_SCHEMAS_URL=/path/to/eidos/packages/schemas/src/eidos npm run generate-types -w @eidosxr/spec
+```
+
+Either way the generator stops, leaving `interfaces.ts` as it was, if the root
+schema's `$id` is not this package's version. To move to a new EIDOS version, bump
+the package version first.
+
 ## Examples
 
 Check out the [examples directory](./examples/) for complete working examples in different frameworks.

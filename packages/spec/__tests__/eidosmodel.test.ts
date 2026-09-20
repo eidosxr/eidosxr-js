@@ -7,9 +7,12 @@
  * so HTTP errors were swallowed too.
  */
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import { version } from "../package.json";
 
-const ROOT = "https://schemas.oceanum.io/eidos/root.json";
-const CHILD = "https://schemas.oceanum.io/eidos/node/test-child.json";
+// The schemas are published per EIDOS version: the package's major.minor.
+const MINOR = version.split(".").slice(0, 2).join(".");
+const ROOT = `https://schemas.oceanum.io/eidos/v${MINOR}/root.json`;
+const CHILD = `https://schemas.oceanum.io/eidos/v${MINOR}/node/test-child.json`;
 
 const schemas: Record<string, object> = {
   [ROOT]: {
@@ -50,6 +53,22 @@ describe("validateSchema()", () => {
     await expect(validateSchema({ id: "x", name: "x" })).rejects.toThrow(
       "Loading error: 404",
     );
+  });
+
+  it("loads the root schema from this package's versioned path", async () => {
+    const fetchSpy = vi.fn(async (uri: string) => ({
+      ok: true,
+      status: 200,
+      json: async () => schemas[uri],
+    }));
+    vi.stubGlobal("fetch", fetchSpy);
+    const { validateSchema } = await import("../src/lib/eidosmodel");
+    await validateSchema({ id: "ok", name: "OK" });
+    // The unversioned path is not kept in step with the versioned schemas.
+    expect(fetchSpy.mock.calls[0][0]).toMatch(
+      /^https:\/\/schemas\.oceanum\.io\/eidos\/v\d+\.\d+\/root\.json$/,
+    );
+    expect(fetchSpy.mock.calls[0][0]).toBe(ROOT);
   });
 
   it("accepts a spec that satisfies the schema (resolving $refs via the loader)", async () => {

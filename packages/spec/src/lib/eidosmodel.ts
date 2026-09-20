@@ -1,6 +1,9 @@
 import Ajv, { ValidateFunction } from "ajv";
+import { MINOR_VERSION } from "./version";
 
-const ROOT_SCHEMA = "https://schemas.oceanum.io/eidos/root.json";
+// The schemas are published per EIDOS version. The unversioned path is not
+// kept in step with them, so validate against this package's own version.
+const ROOT_SCHEMA = `https://schemas.oceanum.io/eidos/v${MINOR_VERSION}/root.json`;
 let validator: ValidateFunction | null = null;
 
 const loadSchema = async (uri: string) => {

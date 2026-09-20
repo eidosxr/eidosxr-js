@@ -1,10 +1,11 @@
 #!/usr/bin/env node
 
 import { bundle } from "./schema-bundler.js";
+import { ROOT_SCHEMA_URL } from "./schema-version.js";
 
 async function debugSchema() {
   try {
-    const schema = await bundle('https://schemas.oceanum.io/eidos/root.json');
+    const schema = await bundle(ROOT_SCHEMA_URL);
     
     // Log all $defs keys to check what's available
     console.log("All $defs keys:");
