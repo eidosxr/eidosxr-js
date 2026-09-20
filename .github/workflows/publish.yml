@@ -10,6 +10,8 @@ name: Publish to npm
 #
 #   git tag v0.12.0 && git push origin v0.12.0
 #
+# A prerelease (v1.0.0-rc.1) is published under the `next` dist-tag, not `latest`.
+#
 # Push the tag on its own: GitHub creates no event, so runs nothing, when more
 # than three tags are pushed at once.
 #
@@ -29,16 +31,13 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       contents: read
-    outputs:
-      packages: ${{ steps.select.outputs.packages }}
     steps:
       - uses: actions/checkout@v7
       - uses: actions/setup-node@v7
         with:
           node-version: '24'
           package-manager-cache: false
-      - id: select
-        run: node .github/scripts/select-packages.mjs "$GITHUB_REF_NAME"
+      - run: node .github/scripts/select-packages.mjs "$GITHUB_REF_NAME"
 
   test:
     needs: select
@@ -62,12 +61,29 @@ jobs:
           node-version: '24'
           registry-url: 'https://registry.npmjs.org'
           package-manager-cache: false
-      - run: npm ci
+      # Selected again here rather than passed from the select job: "Re-run
+      # failed jobs" reuses that job's old output, and an environment approval
+      # can outlast it, so a package published since would fail the loop below.
+      - id: select
+        run: node .github/scripts/select-packages.mjs "$GITHUB_REF_NAME"
+      # No install scripts: this job can mint the OIDC token that publishes.
+      - run: npm ci --ignore-scripts
       # prepublishOnly builds each package. Provenance is attached automatically.
       - name: Publish
         env:
-          PACKAGES: ${{ needs.select.outputs.packages }}
+          PACKAGES: ${{ steps.select.outputs.packages }}
         run: |
+          # The gate fails when it selects nothing, so an empty list means it did
+          # not run as intended. Do not let that pass as a release.
+          if [ -z "$PACKAGES" ]; then
+            echo "::error::No packages were selected for $GITHUB_REF_NAME"
+            exit 1
+          fi
+          # npm refuses to publish a prerelease under the default `latest` dist-tag.
+          tag_args=()
+          case "$GITHUB_REF_NAME" in
+            *-*) tag_args=(--tag next) ;;
+          esac
           for package in $PACKAGES; do
-            npm publish --workspace "$package"
+            npm publish --workspace "$package" "${tag_args[@]}"
           done

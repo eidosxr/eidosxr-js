@@ -21,9 +21,10 @@ import { fileURLToPath } from "node:url";
  */
 export async function selectPackages(tag, packages, isPublished) {
   const version = tag.replace(/^v/, "");
-  const summary = packages.map((p) => `${p.name}@${p.version}`).join(", ");
-  const matching = packages.filter((p) => !p.private && p.version === version);
+  const publishable = packages.filter((p) => !p.private);
+  const matching = publishable.filter((p) => p.version === version);
   if (matching.length === 0) {
+    const summary = publishable.map((p) => `${p.name}@${p.version}`).join(", ");
     throw new Error(
       `Tag ${tag} does not match the version of any package (${summary}). Bump the version in its package.json first.`,
     );
@@ -53,14 +54,22 @@ export function readWorkspacePackages(root) {
 /** Whether name@version is on the public npm registry. */
 export async function isOnNpm(name, version) {
   const res = await fetch(
-    `https://registry.npmjs.org/${name.replace("/", "%2F")}`,
+    `https://registry.npmjs.org/${name.replace("/", "%2F")}/${version}`,
   );
   if (res.status === 404) return false;
-  if (!res.ok) throw new Error(`npm registry: HTTP ${res.status} for ${name}`);
-  return version in ((await res.json()).versions ?? {});
+  if (!res.ok) {
+    throw new Error(`npm registry: HTTP ${res.status} for ${name}@${version}`);
+  }
+  return true;
 }
 
-if (process.argv[1] === fileURLToPath(import.meta.url)) {
+// realpath: import.meta.url is resolved through symlinks and argv[1] is not,
+// so a plain comparison made the script do nothing, and exit 0, when the
+// checkout was reached through a symlink.
+if (
+  process.argv[1] &&
+  fs.realpathSync(process.argv[1]) === fileURLToPath(import.meta.url)
+) {
   const root = path.resolve(
     path.dirname(fileURLToPath(import.meta.url)),
     "../..",
