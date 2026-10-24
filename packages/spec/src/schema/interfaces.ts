@@ -80,6 +80,11 @@ export interface EidosSpec {
    * Floating panels available to the whole specification. Each panel wraps a content node and is opened by a panelopen control, an event trigger, or a spec patch. Panel IDs must be unique; they are referenced by controls (config.panelId) and world layers (panel).
    */
   panels?: EidosPanel[];
+  /**
+   * Template Parameters
+   * Insert-time template metadata: the values a user is asked for when this specification is used as a template. Each parameter names the locations in the specification its value is written to. Ignored by the renderer; tooling that instantiates the template substitutes the values before the specification is rendered.
+   */
+  parameters?: Templateparameter[];
 }
 
 /**
@@ -201,6 +206,10 @@ export interface World {
    */
   qualityScale?: number;
   /**
+   * Upper limit on the resolution of the map's data-layer canvas, as a multiple of CSS pixels. Screens whose device pixel ratio is at or below this value render at full device resolution; denser screens (e.g. 3x phones) render at this ratio instead, which cuts GPU work on mobile devices with little visible loss. Defaults to 2. Raise it (e.g. to 3) for full sharpness on the densest screens, or lower it (e.g. to 1) to favour performance. Does not affect the basemap.
+   */
+  maxPixelRatio?: number;
+  /**
    * Initial camera position and orientation for the map view, including center coordinates, zoom level, pitch, and bearing.
    */
   viewState?: View;
@@ -287,7 +296,7 @@ export interface Document {
 
 /**
  * Grid
- * Layout node that arranges child nodes in a responsive grid pattern. Grid nodes are containers that organize multiple visualization components (maps, plots, documents) into rows and columns. Each child node can span multiple grid cells, allowing for flexible dashboard-style layouts.
+ * Layout node that arranges child nodes into a grid of equal-size rows and columns. Grid nodes are containers that organize multiple visualization components (maps, plots, documents) into dashboard-style layouts; each child can span several cells, and cells may overlap (later children are drawn on top). The grid fills its container and scales with it. On narrow hosts (renderer width under 600px) the outermost grid stacks its children into a single scrolling column, one row per child in child order, each at least 280px tall; grids nested in a grid cell keep their layout. Use `responsive` to give the grid different layouts at narrower widths instead.
  */
 export interface Grid {
   /**
@@ -303,14 +312,15 @@ export interface Grid {
    * Node type identifier. Must be 'grid' for layout containers that arrange children in a grid pattern.
    */
   nodeType: GridNodeType;
+  gridSize: Gridsize;
+  gridLayout?: Gridlayout;
   /**
-   * Defines the overall grid dimensions. All child nodes must fit within these bounds. The grid acts as a responsive layout container that adapts to screen size while maintaining relative proportions.
+   * Optional layouts for narrower widths. Each entry applies while the grid's own layout width (in CSS px; not the viewport) is at most its maxWidth; when several match, the one with the smallest maxWidth wins, and the default layout (gridSize/gridLayout) applies when none match. An entry may set gridSize, gridLayout or both: omitted fields keep the default value, except that an entry setting gridSize without gridLayout auto-places the children (the default gridLayout was written for the default gridSize); cell styles come from the entry's gridLayout when it has one, otherwise from the default gridLayout. Narrow hosts: when the renderer is under 600px wide the outermost grid stacks its children into one column (see the grid description). A matching entry with a maxWidth of 600 or less describes the narrow layout and replaces that stacking; a matching entry with a larger maxWidth does not, so on a narrow host the grid still stacks unless an entry with maxWidth of 600 or less matches. An entry with only a maxWidth of 600 or less keeps the default layout up to that width, which opts the grid out of stacking. A gridLayout must have one entry per child: an entry's gridLayout of the wrong length is ignored with a console error and the children are auto-placed instead.
+   * 
+   * @example
+   * [{"maxWidth":600,"gridSize":{"columns":1,"rows":3},"gridLayout":[{"x":0,"y":0,"w":1,"h":1},{"x":0,"y":1,"w":1,"h":2},{"x":0,"y":1,"w":1,"h":1}]},{"maxWidth":1000,"gridSize":{"columns":2,"rows":2}}]
    */
-  gridSize: object;
-  /**
-   * Optional array defining precise positioning for each child node. If provided, must have the same length as the children array. Each element defines the grid position and size for the corresponding child.
-   */
-  gridLayout?: object[];
+  responsive?: object[];
   /**
    * Array of child nodes to display within the grid. Children are positioned automatically if gridLayout is not specified, or according to the gridLayout array if provided. Can contain any type of EIDOS node, including `derived` for reusing another node with patches.
    */
@@ -335,7 +345,7 @@ export interface Menu {
    */
   activeItem?: string;
   /**
-   * Location of menu relative to content. Reserved: not currently applied by the renderer, which always places the menu above the content.
+   * Location of the menu relative to the content: 'top' or 'bottom' places a horizontal menu bar above or below the content, 'left' or 'right' a vertical menu beside it. When unset the menu is at the top. On narrow hosts (renderer width under 600px) a left or right menu becomes a bar above the content.
    */
   position?: "top" | "left" | "bottom" | "right";
   /**
@@ -417,6 +427,46 @@ Examples:
    * Whether the user can dismiss the panel. When false, the close button is hidden and the panel can only be closed programmatically (via specPatch or a closePanel event). Defaults to true.
    */
   closable?: boolean;
+}
+
+/**
+ * TemplateParameter
+ * A single template parameter: a value supplied when the template is inserted, written to one or more locations in the specification.
+ */
+export interface Templateparameter {
+  /**
+   * Identifier for the parameter. Starts with a lowercase letter; letters, digits and underscores, with dot-separated segments allowed (e.g. 'region' or 'source.variable'). Keys should be unique within the specification; the schema does not check this, the tooling that instantiates the template does.
+   * 
+   * @example
+   * "region"
+   * "dataset"
+   * "source.variable"
+   */
+  key: string;
+  /**
+   * Human-readable label shown to the user when asking for the value.
+   */
+  label: string;
+  kind: Parameterkind;
+  /**
+   * Locations the value is written to, as RFC 6901 JSON Pointers into the whole specification (e.g. '/theme/style/...', '/data/0/dataSpec/datasource', '/root/children/0/layerSpec/...', '/panels/0/...'). The schema checks only that these are strings; whether a target exists and accepts the value is checked by the tooling that instantiates the template.
+   * 
+   * @example
+   * ["/data/0/dataSpec/datasource"]
+   */
+  targets: string[];
+  /**
+   * Whether a value must be supplied when the template is inserted.
+   */
+  required?: boolean;
+  /**
+   * Value used when none is supplied.
+   */
+  default?: any;
+  /**
+   * Key of another parameter this one depends on. For a 'datakey' parameter, the key of the 'data' parameter whose data source it reads its keys from. The schema checks only that this is a string; whether it names an existing parameter of the right kind is checked by the tooling that instantiates the template.
+   */
+  dependsOn?: string;
 }
 
 /**
@@ -706,7 +756,7 @@ export interface ControlGroup {
    */
   orientation?: "horizontal" | "vertical";
   /**
-   * Position of the control group within the map container. Specify top/left/right/bottom as pixel numbers; CSS strings are not supported here. Defaults to top: 100, left: 10 if unset.
+   * Position of the control group within the map. Leave unset (or all null) to place the group in the map's top-left control slot, where unpositioned groups stack without overlapping and reflow with the other map controls on small screens. Set top/left/right/bottom as pixel offsets from the map edges to pin the group there instead; CSS strings are not supported. If only one axis is set (e.g. only left), the group is pinned to the top edge (or, with only top/bottom, to the left edge). A pinned group is outside the slot layout, so it can overlap other map controls.
    */
   position?: any;
   /**
@@ -841,6 +891,35 @@ export interface DocumentStyle {
 }
 
 /**
+ * Defines the overall grid dimensions as a number of equal-size columns and rows; the columns share the grid's width and the rows its height, so the layout keeps its proportions as the container is resized. Child nodes should fit within these bounds: a cell placed or spanning past them gets extra tracks of the same size and overflows the grid.
+ */
+export interface Gridsize {
+  /**
+   * Number of columns in the grid layout. Determines horizontal subdivision of the container.
+   * 
+   * @example
+   * 2
+   * 3
+   * 4
+   */
+  columns: number;
+  /**
+   * Number of rows in the grid layout. Determines vertical subdivision of the container.
+   * 
+   * @example
+   * 1
+   * 2
+   * 3
+   */
+  rows: number;
+}
+
+/**
+ * Optional array defining precise positioning for each child node. If provided, must have the same length as the children array. Each element defines the grid position and size for the corresponding child.
+ */
+export type Gridlayout = object[];
+
+/**
  * Derived
  * A derived node references another node in the same spec by ID and applies a list of patches at render time. Use it to reuse a chart, document, panel, or other node with small variations (e.g. a different data source or field) without duplicating the source subtree. Resolution and patching happen lazily at render time — derived nodes inside unrendered branches cost nothing, and edits to the source node propagate naturally on the next render.
  */
@@ -893,6 +972,11 @@ export interface Triggerpattern {
    */
   data?: object;
 }
+
+/**
+ * Kind of value a template parameter asks for: 'data' a data source, 'datakey' a variable or key of the data source named by dependsOn, 'text' a free-text string, 'number' a number.
+ */
+export type Parameterkind = "data" | "datakey" | "text" | "number";
 
 /**
  * Color style
