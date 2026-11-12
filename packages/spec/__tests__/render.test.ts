@@ -57,14 +57,18 @@ const iframeOf = (el: HTMLElement): HTMLIFrameElement => {
 };
 
 /** Post a message to the host as if from the renderer iframe. */
-const fromRenderer = (iframe: HTMLIFrameElement, data: unknown) => {
+const fromRenderer = (
+  iframe: HTMLIFrameElement,
+  data: unknown,
+  origin = RENDERER_ORIGIN,
+) => {
   window.dispatchEvent(
-    new MessageEvent("message", { data, source: iframe.contentWindow }),
+    new MessageEvent("message", { data, source: iframe.contentWindow, origin }),
   );
 };
 
-const init = (iframe: HTMLIFrameElement) =>
-  fromRenderer(iframe, { type: "init", id: "test-spec" });
+const init = (iframe: HTMLIFrameElement, origin = RENDERER_ORIGIN) =>
+  fromRenderer(iframe, { type: "init", id: "test-spec" }, origin);
 
 /** The status event the renderer's Eidos component emits once mounted. */
 const status = (iframe: HTMLIFrameElement) =>
@@ -158,6 +162,7 @@ describe("render() readiness", () => {
 
     status(iframeOf(el));
     const view = await pending;
+    await flush(); // held events are delivered in a later task
 
     expect(onReady).toHaveBeenCalledTimes(1);
     expect(eventListener).toHaveBeenCalledWith(
@@ -307,12 +312,83 @@ describe("render() readiness", () => {
     expect(seen).toEqual([]);
     init(iframe);
     const view = await pending;
+    // Held events go out in a later task, after the caller has the result.
+    expect(seen).toEqual(["onReady"]);
+    await flush();
     expect(seen).toEqual(["onReady", "viewStateChange"]);
 
     fromRenderer(iframe, { action: "click" });
     expect(seen).toEqual(["onReady", "viewStateChange", "click"]);
     view.destroy();
   });
+
+  it("lets a held event's listener use the awaited RenderResult", async () => {
+    const el = makeContainer();
+    let view: Awaited<ReturnType<typeof render>> | undefined;
+    const iframes: HTMLIFrameElement[] = [];
+    const errors = vi.spyOn(console, "error").mockImplementation(() => {});
+    const pending = render(el, makeSpec(), {
+      // As a host would: dereference the result it awaited.
+      eventListener: () => iframes.push(view!.iframe),
+    });
+    const iframe = iframeOf(el);
+
+    status(iframe); // ready, and itself an event for eventListener
+    view = await pending;
+    await flush();
+
+    expect(iframes).toEqual([iframe]);
+    expect(errors).not.toHaveBeenCalled();
+    view.destroy();
+  });
+
+  it("drops held events when destroyed before they are delivered", async () => {
+    const el = makeContainer();
+    const eventListener = vi.fn();
+    const pending = render(el, makeSpec(), { eventListener });
+    status(iframeOf(el));
+    (await pending).destroy();
+    await flush();
+    expect(eventListener).not.toHaveBeenCalled();
+  });
+
+  it("cleans up quietly when the container is removed before ready", async () => {
+    vi.useFakeTimers();
+    const el = makeContainer();
+    const onError = vi.fn();
+    const pending = render(el, makeSpec(), { readyTimeout: 1000, onError });
+    const assertion = expect(pending).rejects.toMatchObject({ kind: "load" });
+    const removeListener = vi.spyOn(window, "removeEventListener");
+
+    el.remove();
+    await vi.advanceTimersByTimeAsync(1000);
+    await assertion;
+
+    expect(onError).not.toHaveBeenCalled();
+    expect(removeListener).toHaveBeenCalledWith(
+      "message",
+      expect.any(Function),
+    );
+    expect(el.getAttribute("data-eidos-initialized")).toBeNull();
+  });
+
+  it.each([2 ** 31, Infinity])(
+    "treats a readyTimeout of %s as no timeout rather than firing at once",
+    async (readyTimeout) => {
+      vi.useFakeTimers();
+      const el = makeContainer();
+      const onError = vi.fn();
+      const pending = render(el, makeSpec(), { readyTimeout, onError });
+      const state = track(pending);
+
+      await vi.advanceTimersByTimeAsync(60_000);
+      expect(onError).not.toHaveBeenCalled();
+      expect(state.settled).toBe(false);
+
+      init(iframeOf(el));
+      (await pending).destroy();
+    },
+  );
 });
 
 describe("render() validation", () => {
@@ -496,12 +572,78 @@ describe("render() messaging", () => {
     const iframe = iframeOf(el);
     const postMessage = vi.spyOn(iframe.contentWindow!, "postMessage");
 
-    init(iframe);
+    init(iframe, origin === "*" ? "null" : origin);
     const view = await pending;
     expect(postMessage).toHaveBeenCalledWith(
       expect.objectContaining({ type: "spec" }),
       origin,
     );
+    view.destroy();
+  });
+
+  it("fails clearly when the renderer is served from another origin", async () => {
+    const el = makeContainer();
+    const onError = vi.fn();
+    const pending = render(el, makeSpec(), { onError });
+    const iframe = iframeOf(el);
+    const postMessage = vi.spyOn(iframe.contentWindow!, "postMessage");
+
+    // e.g. the renderer URL redirected to a CDN host.
+    init(iframe, "https://cdn.example.com");
+
+    await expect(pending).rejects.toMatchObject({
+      kind: "load",
+      message: expect.stringContaining(
+        "EIDOS renderer document is from https://cdn.example.com, not from https://render.eidos.oceanum.io",
+      ),
+    });
+    expect(onError).toHaveBeenCalledWith(
+      expect.objectContaining({ kind: "load" }),
+    );
+    // Nothing, the token included, was sent to the other origin.
+    expect(postMessage).not.toHaveBeenCalled();
+    expect(el.querySelector("iframe")).toBeNull();
+  });
+
+  it("warns about, and ignores, another origin after the embed is up", async () => {
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    const eventListener = vi.fn();
+    const el = makeContainer();
+    const view = await mount(el, { eventListener });
+    await flush();
+
+    fromRenderer(view.iframe, { action: "click" }, "https://elsewhere.example");
+    expect(eventListener).not.toHaveBeenCalled();
+    expect(warn).toHaveBeenCalledWith(
+      expect.stringContaining(
+        "renderer document is from https://elsewhere.example",
+      ),
+    );
+    expect(view.iframe.isConnected).toBe(true);
+    view.destroy();
+  });
+
+  it("follows an http to https redirect of the renderer on the same host", async () => {
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    const el = makeContainer();
+    const pending = render(el, makeSpec(), {
+      renderer: "http://render.eidos.oceanum.io/v0.12/index.html",
+      authToken: "secret-token",
+    });
+    const iframe = iframeOf(el);
+    const postMessage = vi.spyOn(iframe.contentWindow!, "postMessage");
+
+    init(iframe, RENDERER_ORIGIN);
+    const view = await pending;
+    await flush(); // sendAuth awaits the token
+
+    expect(warn).toHaveBeenCalledWith(
+      expect.stringContaining("use the https URL"),
+    );
+    expect(postMessage.mock.calls.map(([, origin]) => origin)).toEqual([
+      RENDERER_ORIGIN,
+      RENDERER_ORIGIN,
+    ]);
     view.destroy();
   });
 

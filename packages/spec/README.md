@@ -294,7 +294,7 @@ Low-level function to render EIDOS in a DOM element. Use this for vanilla JavaSc
   - `onChange` (function): Called with a snapshot whenever the spec proxy changes
   - `onReady` (function): Called once the renderer is ready, just before the promise resolves
   - `onError` (function): Called with the `EidosRenderError` the promise rejects with
-  - `readyTimeout` (number): Milliseconds to wait for the renderer to report ready (default `30000`; `0` waits indefinitely). If the renderer is ready by then but the schemas are still loading, the spec is rendered unvalidated with a warning.
+  - `readyTimeout` (number): Milliseconds to wait for the renderer to report ready (default `30000`; `0`, `Infinity` or more than 2^31-1 waits indefinitely). If the renderer is ready by then but the schemas are still loading, the spec is rendered unvalidated with a warning.
   - `debug` (boolean): Log every message from the renderer to the console
 
 **Returns:** `Promise<RenderResult>`, resolved once the renderer reports ready (its first `init` or `status` message) and the spec has been validated
@@ -309,22 +309,31 @@ example, `schemas.oceanum.io` is unreachable), the spec is rendered unvalidated 
 a warning is logged.
 
 **Rejects** with an `EidosRenderError`, whose `kind` is:
-- `"load"`: the renderer iframe failed to load
-- `"timeout"`: the renderer did not report ready within `readyTimeout`
+- `"load"`: the iframe reported a load error (most browsers do not fire one for an
+  unreachable host, which shows up as `"timeout"` instead), the renderer document is
+  from another origin than the renderer URL (see below), or the container was
+  removed from the page before the renderer was ready (`onError` is not called for
+  this one)
+- `"timeout"`: the renderer did not report ready within `readyTimeout`, which is
+  also how an unreachable renderer host is reported
 - `"validation"`: the spec does not satisfy the EIDOS schema (the message starts with `Invalid Eidos Spec:`)
 
 On failure the iframe is removed and the container is freed, so `render()` can be
 retried in it. (Rendering into a container that already holds an embed throws a
 plain `Error` before anything is created; `onError` is not called for it.)
 
-Renderer events that arrive before the promise resolves are passed to
-`eventListener` just before it resolves, and are dropped if it rejects.
+Renderer events that arrive before the promise resolves are held and passed to
+`eventListener` in a later task, after `await render()` has returned the result.
+They are dropped if it rejects or the embed is destroyed first.
 
 Messages to the renderer, including the auth token, are posted to the renderer's
 origin rather than to `"*"`. Only for a renderer URL without an origin of its own,
 such as a `data:` URL, are they posted to `"*"`. The renderer must therefore be
-served from the origin of its URL: a redirect to another origin would leave it
-without a spec.
+served from the origin of its URL. An `http:` URL redirected to `https:` on the same
+host is followed, with a warning. A redirect to any other origin fails `render()`
+with a `"load"` error that names both origins. If it happens after the embed is up,
+a warning is logged and the renderer's messages are ignored. Use the renderer's
+final URL.
 
 **Example:**
 ```javascript

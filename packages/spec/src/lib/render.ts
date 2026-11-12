@@ -5,11 +5,16 @@ import { MINOR_VERSION } from "./version";
 
 const DEFAULT_RENDERER = `https://render.eidos.oceanum.io/v${MINOR_VERSION}/index.html`;
 const DEFAULT_READY_TIMEOUT_MS = 30_000;
+// setTimeout fires at once for delays above a signed 32-bit int (~24.8 days).
+const MAX_TIMEOUT_MS = 2 ** 31 - 1;
 
 /**
  * Why render() failed:
- * - `load`: the renderer iframe failed to load.
- * - `timeout`: the renderer did not report ready within `readyTimeout`.
+ * - `load`: the iframe reported a load error, the renderer document is from
+ *   another origin than the renderer URL, or the container was removed before
+ *   the renderer was ready.
+ * - `timeout`: the renderer did not report ready within `readyTimeout`; this
+ *   is also how an unreachable renderer host shows up in most browsers.
  * - `validation`: the spec does not satisfy the EIDOS schema.
  */
 export type EidosRenderErrorKind = "load" | "timeout" | "validation";
@@ -49,8 +54,9 @@ export interface RenderOptions {
   onError?: (error: EidosRenderError) => void;
   /**
    * Milliseconds to wait for the renderer to report ready before failing
-   * (default 30000; 0 waits indefinitely). If the renderer is ready by then
-   * but the schemas are still loading, the spec is rendered unvalidated.
+   * (default 30000; 0, Infinity or more than 2^31-1 waits indefinitely). If the
+   * renderer is ready by then but the schemas are still loading, the spec is
+   * rendered unvalidated.
    */
   readyTimeout?: number;
   /** Log every message from the renderer to the console */
@@ -90,6 +96,28 @@ const rendererTargetOrigin = (renderer: string): string => {
 };
 
 /**
+ * Whether `observed` is `expected` upgraded from http to https on the same
+ * host with default ports: what an HTTPS redirect of the renderer URL does.
+ * Following that redirect only moves to a more secure scheme on the same host,
+ * so it is the one origin change render() adopts.
+ */
+const isHttpsUpgrade = (expected: string, observed: string): boolean => {
+  try {
+    const from = new URL(expected);
+    const to = new URL(observed);
+    return (
+      from.protocol === "http:" &&
+      to.protocol === "https:" &&
+      from.hostname === to.hostname &&
+      from.port === "" &&
+      to.port === ""
+    );
+  } catch {
+    return false;
+  }
+};
+
+/**
  * Embed the EIDOS iframe and set up message passing.
  *
  * The iframe is created straight away; the spec is schema-validated alongside
@@ -99,7 +127,8 @@ const rendererTargetOrigin = (renderer: string): string => {
  * time, or if the spec is invalid; the container is then cleared, so render()
  * can be retried in it. If the schemas cannot be loaded, the spec is rendered
  * unvalidated and a warning is logged. Renderer events that arrive before
- * render() resolves reach eventListener just before it does.
+ * render() resolves reach eventListener in a later task, after the caller has
+ * the RenderResult.
  *
  * @param element HTML element to render the EIDOS spec into
  * @param spec The EIDOS specification object
@@ -139,7 +168,7 @@ const render = async (
   // Create Valtio proxy - naturally mutable, no unprotect needed
   const eidos = proxy(structuredClone(spec));
   const _id = id || spec.id;
-  const targetOrigin = rendererTargetOrigin(renderer);
+  let targetOrigin = rendererTargetOrigin(renderer);
 
   // Mark container as initialized. Every failure path below clears it again.
   element.setAttribute("data-eidos-initialized", "true");
@@ -207,14 +236,19 @@ const render = async (
         iframe,
         destroy: teardown,
       });
-      // resolve() only queues the caller's continuation, so these still run
-      // before `await render()` returns.
+      // resolve() only queues the caller's continuation, so onReady still
+      // runs before `await render()` returns.
       callSafely("onReady", () => onReady?.());
-      const held = heldEvents ?? [];
-      heldEvents = null;
-      for (const data of held) {
-        callSafely("eventListener", () => eventListener?.(data));
-      }
+      // Held events go out in a later task, once the caller's continuation
+      // has run and it holds the RenderResult: a listener may use it. Events
+      // arriving meanwhile keep being held, so the order is kept.
+      setTimeout(() => {
+        const held = heldEvents;
+        heldEvents = null;
+        for (const data of held ?? []) {
+          callSafely("eventListener", () => eventListener?.(data));
+        }
+      }, 0);
     };
 
     const markReady = () => {
@@ -235,6 +269,34 @@ const render = async (
       }
     };
 
+    // Our iframe now holds a document from an origin other than the one the
+    // messages are addressed to.
+    let warnedOrigin = false;
+    const checkOrigin = (origin: string): boolean => {
+      if (targetOrigin === "*" || origin === targetOrigin) return true;
+      if (isHttpsUpgrade(targetOrigin, origin)) {
+        console.warn(
+          `[EIDOS] Renderer ${renderer} redirected to ${origin}; use the https URL.`,
+        );
+        targetOrigin = origin;
+        return true;
+      }
+      // Any other origin is not adopted: the iframe may have navigated away,
+      // and the spec and auth token must not follow it there. Its messages
+      // are ignored.
+      const message =
+        `EIDOS renderer document is from ${origin}, not from ${targetOrigin}, ` +
+        `the origin of the renderer URL (a cross-origin redirect?). ` +
+        `Use the renderer's final URL.`;
+      if (settled) {
+        if (!warnedOrigin) console.warn(`[EIDOS] ${message}`);
+        warnedOrigin = true;
+      } else {
+        fail(new EidosRenderError("load", message));
+      }
+      return false;
+    };
+
     // Listen from the start rather than from iframe load: the renderer
     // announces itself (`init`, then a `status` event) as soon as it mounts,
     // which is before the iframe's load event.
@@ -242,6 +304,7 @@ const render = async (
       if (event.source !== iframe.contentWindow) return;
       const data = event.data;
       if (!data || typeof data !== "object") return;
+      if (!checkOrigin(event.origin)) return;
 
       if (debug) {
         console.log(
@@ -288,6 +351,7 @@ const render = async (
     });
 
     function teardown() {
+      heldEvents = null;
       clearReadyTimer();
       window.removeEventListener("message", messageHandler);
       unsubscribe();
@@ -302,7 +366,6 @@ const render = async (
     const fail = (error: EidosRenderError) => {
       if (settled) return;
       settled = true;
-      heldEvents = null;
       teardown();
       reject(error);
       callSafely("onError", () => onError?.(error));
@@ -312,9 +375,22 @@ const render = async (
       fail(new EidosRenderError("load", "Failed to load EIDOS renderer"));
     };
 
-    if (Number.isFinite(readyTimeout) && readyTimeout > 0) {
+    if (readyTimeout > 0 && readyTimeout <= MAX_TIMEOUT_MS) {
       readyTimer = setTimeout(() => {
         readyTimer = undefined;
+        if (!iframe.isConnected) {
+          // The host removed the embed before it was ready: it is no longer
+          // wanted, so clean up and reject without reporting through onError.
+          settled = true;
+          teardown();
+          reject(
+            new EidosRenderError(
+              "load",
+              "EIDOS renderer was removed from the document before it was ready",
+            ),
+          );
+          return;
+        }
         if (!rendererReady) {
           fail(
             new EidosRenderError(
