@@ -47,7 +47,11 @@ export interface RenderOptions {
   onReady?: () => void;
   /** Called when render() fails, with the error it rejects with */
   onError?: (error: EidosRenderError) => void;
-  /** Milliseconds to wait for the renderer to report ready before failing (default 30000; 0 waits indefinitely) */
+  /**
+   * Milliseconds to wait for the renderer to report ready before failing
+   * (default 30000; 0 waits indefinitely). If the renderer is ready by then
+   * but the schemas are still loading, the spec is rendered unvalidated.
+   */
   readyTimeout?: number;
   /** Log every message from the renderer to the console */
   debug?: boolean;
@@ -94,7 +98,8 @@ const rendererTargetOrigin = (renderer: string): string => {
  * EidosRenderError if the renderer fails to load or does not report ready in
  * time, or if the spec is invalid; the container is then cleared, so render()
  * can be retried in it. If the schemas cannot be loaded, the spec is rendered
- * unvalidated and a warning is logged.
+ * unvalidated and a warning is logged. Renderer events that arrive before
+ * render() resolves reach eventListener just before it does.
  *
  * @param element HTML element to render the EIDOS spec into
  * @param spec The EIDOS specification object
@@ -152,7 +157,11 @@ const render = async (
     let settled = false;
     let rendererReady = false;
     let specChecked = false;
+    let specDelivered = false;
     let readyTimer: ReturnType<typeof setTimeout> | undefined;
+    // Renderer events that arrive before render() settles are held back, so
+    // eventListener only sees events from an embed that actually mounted.
+    let heldEvents: unknown[] | null = [];
 
     // contentWindow is read per message rather than captured: it is the
     // iframe's WindowProxy, which stays the same object across navigation.
@@ -178,10 +187,19 @@ const render = async (
       }
     };
 
+    // A throwing host callback must not leave render() unsettled.
+    const callSafely = (name: string, callback: () => void) => {
+      try {
+        callback();
+      } catch (e) {
+        console.error(`[EIDOS] ${name} threw:`, e);
+      }
+    };
+
     const maybeResolve = () => {
       if (settled || !rendererReady || !specChecked) return;
       settled = true;
-      onReady?.();
+      clearReadyTimer();
       resolve({
         spec: eidos,
         updateAuth: sendAuth,
@@ -189,13 +207,32 @@ const render = async (
         iframe,
         destroy: teardown,
       });
+      // resolve() only queues the caller's continuation, so these still run
+      // before `await render()` returns.
+      callSafely("onReady", () => onReady?.());
+      const held = heldEvents ?? [];
+      heldEvents = null;
+      for (const data of held) {
+        callSafely("eventListener", () => eventListener?.(data));
+      }
     };
 
     const markReady = () => {
       if (rendererReady) return;
       rendererReady = true;
-      clearReadyTimer();
       maybeResolve();
+    };
+
+    // Send the spec and the auth token.
+    const deliverSpec = () => {
+      specDelivered = true;
+      // Snapshot first: the valtio proxy itself is not structured-cloneable
+      // (postMessage/structuredClone throw DataCloneError on any Proxy), so
+      // cloning `eidos` directly made this crash and the spec never arrived.
+      post({ id: _id, type: "spec", payload: snapshot(eidos) });
+      if (authToken) {
+        sendAuth(authToken);
+      }
     };
 
     // Listen from the start rather than from iframe load: the renderer
@@ -219,20 +256,22 @@ const render = async (
       if (data.id && data.id !== _id) return;
 
       if (data.type === "init") {
-        // Send initial spec. Snapshot first: the valtio proxy itself is
-        // not structured-cloneable (postMessage/structuredClone throw
-        // DataCloneError on any Proxy), so cloning `eidos` directly made
-        // this handler crash on every init and the spec never arrived.
-        post({ id: _id, type: "spec", payload: snapshot(eidos) });
-        // Send auth token on init if provided
-        if (authToken) {
-          sendAuth(authToken);
-        }
+        // The renderer asks for the spec until it gets one: answer each time.
+        deliverSpec();
         markReady();
       } else if (data.type || data.action || data.control) {
         // Process as event - EIDOS events may not have 'type' but have 'action' and 'control'
-        if (data.action === "status") markReady();
-        eventListener?.(data);
+        if (data.action === "status") {
+          // The renderer is listening once it reports status, so make sure
+          // it has the spec even if its init was not seen.
+          if (!specDelivered) deliverSpec();
+          markReady();
+        }
+        if (heldEvents) {
+          heldEvents.push(data);
+        } else {
+          eventListener?.(data);
+        }
       }
     };
     window.addEventListener("message", messageHandler);
@@ -263,9 +302,10 @@ const render = async (
     const fail = (error: EidosRenderError) => {
       if (settled) return;
       settled = true;
+      heldEvents = null;
       teardown();
-      onError?.(error);
       reject(error);
+      callSafely("onError", () => onError?.(error));
     };
 
     iframe.onerror = () => {
@@ -274,12 +314,23 @@ const render = async (
 
     if (Number.isFinite(readyTimeout) && readyTimeout > 0) {
       readyTimer = setTimeout(() => {
-        fail(
-          new EidosRenderError(
-            "timeout",
-            `EIDOS renderer did not report ready within ${readyTimeout} ms`,
-          ),
+        readyTimer = undefined;
+        if (!rendererReady) {
+          fail(
+            new EidosRenderError(
+              "timeout",
+              `EIDOS renderer did not report ready within ${readyTimeout} ms`,
+            ),
+          );
+          return;
+        }
+        // The renderer is up but the schemas are still loading: as when they
+        // cannot be loaded at all, render the spec unvalidated.
+        console.warn(
+          `[EIDOS] Spec not validated: the EIDOS schemas did not load within ${readyTimeout} ms`,
         );
+        specChecked = true;
+        maybeResolve();
       }, readyTimeout);
     }
 
@@ -301,6 +352,13 @@ const render = async (
           return;
         }
         const message = e instanceof Error ? e.message : String(e);
+        if (settled) {
+          // Validation outlasted readyTimeout and the embed is already up.
+          if (iframe.isConnected) {
+            console.warn(`[EIDOS] Invalid Eidos Spec: ${message}`);
+          }
+          return;
+        }
         fail(
           new EidosRenderError("validation", `Invalid Eidos Spec: ${message}`, {
             cause: e,

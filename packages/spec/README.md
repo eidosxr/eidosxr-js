@@ -294,7 +294,7 @@ Low-level function to render EIDOS in a DOM element. Use this for vanilla JavaSc
   - `onChange` (function): Called with a snapshot whenever the spec proxy changes
   - `onReady` (function): Called once the renderer is ready, just before the promise resolves
   - `onError` (function): Called with the `EidosRenderError` the promise rejects with
-  - `readyTimeout` (number): Milliseconds to wait for the renderer to report ready (default `30000`; `0` waits indefinitely)
+  - `readyTimeout` (number): Milliseconds to wait for the renderer to report ready (default `30000`; `0` waits indefinitely). If the renderer is ready by then but the schemas are still loading, the spec is rendered unvalidated with a warning.
   - `debug` (boolean): Log every message from the renderer to the console
 
 **Returns:** `Promise<RenderResult>`, resolved once the renderer reports ready (its first `init` or `status` message) and the spec has been validated
@@ -314,11 +314,17 @@ a warning is logged.
 - `"validation"`: the spec does not satisfy the EIDOS schema (the message starts with `Invalid Eidos Spec:`)
 
 On failure the iframe is removed and the container is freed, so `render()` can be
-retried in it.
+retried in it. (Rendering into a container that already holds an embed throws a
+plain `Error` before anything is created; `onError` is not called for it.)
+
+Renderer events that arrive before the promise resolves are passed to
+`eventListener` just before it resolves, and are dropped if it rejects.
 
 Messages to the renderer, including the auth token, are posted to the renderer's
 origin rather than to `"*"`. Only for a renderer URL without an origin of its own,
-such as a `data:` URL, are they posted to `"*"`.
+such as a `data:` URL, are they posted to `"*"`. The renderer must therefore be
+served from the origin of its URL: a redirect to another origin would leave it
+without a spec.
 
 **Example:**
 ```javascript

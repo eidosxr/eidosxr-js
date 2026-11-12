@@ -250,6 +250,69 @@ describe("render() readiness", () => {
     expect(view.iframe).toBe(iframeOf(el));
     view.destroy();
   });
+
+  it("sends the spec when the renderer reports status without an init", async () => {
+    const el = makeContainer();
+    const pending = render(el, makeSpec());
+    const iframe = iframeOf(el);
+    const postMessage = vi.spyOn(iframe.contentWindow!, "postMessage");
+
+    status(iframe);
+    const view = await pending;
+    expect(postMessage).toHaveBeenCalledWith(
+      expect.objectContaining({ type: "spec" }),
+      RENDERER_ORIGIN,
+    );
+    view.destroy();
+  });
+
+  it("still resolves when onReady throws", async () => {
+    vi.spyOn(console, "error").mockImplementation(() => {});
+    const el = makeContainer();
+    const view = await mount(el, {
+      onReady: () => {
+        throw new Error("host bug");
+      },
+    });
+    expect(view.iframe.isConnected).toBe(true);
+    expect(console.error).toHaveBeenCalledWith(
+      "[EIDOS] onReady threw:",
+      expect.any(Error),
+    );
+    view.destroy();
+  });
+
+  it("still rejects when onError throws", async () => {
+    vi.spyOn(console, "error").mockImplementation(() => {});
+    const el = makeContainer();
+    const pending = render(el, makeSpec(), {
+      onError: () => {
+        throw new Error("host bug");
+      },
+    });
+    iframeOf(el).dispatchEvent(new Event("error"));
+    await expect(pending).rejects.toMatchObject({ kind: "load" });
+  });
+
+  it("passes events that arrive before ready to eventListener once it resolves", async () => {
+    const el = makeContainer();
+    const seen: string[] = [];
+    const pending = render(el, makeSpec(), {
+      eventListener: (e) => seen.push((e as { action: string }).action),
+      onReady: () => seen.push("onReady"),
+    });
+    const iframe = iframeOf(el);
+
+    fromRenderer(iframe, { action: "viewStateChange" });
+    expect(seen).toEqual([]);
+    init(iframe);
+    const view = await pending;
+    expect(seen).toEqual(["onReady", "viewStateChange"]);
+
+    fromRenderer(iframe, { action: "click" });
+    expect(seen).toEqual(["onReady", "viewStateChange", "click"]);
+    view.destroy();
+  });
 });
 
 describe("render() validation", () => {
@@ -342,6 +405,57 @@ describe("render() validation", () => {
 
     // A retry in the same container must not hit the already-mounted guard.
     const view = await mount(el);
+    expect(view.iframe.isConnected).toBe(true);
+    view.destroy();
+  });
+
+  it("does not pass events from an embed that is rejected as invalid", async () => {
+    let failValidation!: (e: Error) => void;
+    vi.mocked(validateSchema).mockReturnValueOnce(
+      new Promise((_, reject) => (failValidation = reject)),
+    );
+    const eventListener = vi.fn();
+    const el = makeContainer();
+    const pending = render(el, makeSpec(), { eventListener });
+    const iframe = iframeOf(el);
+
+    init(iframe);
+    status(iframe);
+    failValidation(new Error("EIDOS spec validation failed: /name"));
+
+    await expect(pending).rejects.toMatchObject({ kind: "validation" });
+    expect(eventListener).not.toHaveBeenCalled();
+  });
+
+  it("bounds the wait on validation by readyTimeout once the renderer is ready", async () => {
+    vi.useFakeTimers();
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    let failValidation!: (e: Error) => void;
+    vi.mocked(validateSchema).mockReturnValueOnce(
+      new Promise((_, reject) => (failValidation = reject)),
+    );
+    const onError = vi.fn();
+    const el = makeContainer();
+    const pending = render(el, makeSpec(), { readyTimeout: 5000, onError });
+    const state = track(pending);
+    init(iframeOf(el));
+
+    await vi.advanceTimersByTimeAsync(4999);
+    expect(state.settled).toBe(false);
+    await vi.advanceTimersByTimeAsync(1);
+    const view = await pending;
+
+    expect(onError).not.toHaveBeenCalled();
+    expect(warn).toHaveBeenCalledWith(
+      "[EIDOS] Spec not validated: the EIDOS schemas did not load within 5000 ms",
+    );
+
+    // A late verdict on a live embed is reported, not acted on.
+    failValidation(new Error("EIDOS spec validation failed: /name"));
+    await vi.advanceTimersByTimeAsync(0);
+    expect(warn).toHaveBeenLastCalledWith(
+      "[EIDOS] Invalid Eidos Spec: EIDOS spec validation failed: /name",
+    );
     expect(view.iframe.isConnected).toBe(true);
     view.destroy();
   });
