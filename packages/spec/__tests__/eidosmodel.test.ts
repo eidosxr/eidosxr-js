@@ -93,7 +93,9 @@ describe("validateSchema()", () => {
     vi.stubGlobal("fetch", goodFetch);
     const { validateSchema } = await import("../src/lib/eidosmodel");
     const spec = { id: "ok", name: "OK" };
-    await expect(validateSchema({ ...spec, currentTime: "PT0H" })).resolves.toBe(true);
+    await expect(
+      validateSchema({ ...spec, currentTime: "PT0H" }),
+    ).resolves.toBe(true);
     await expect(
       validateSchema({ ...spec, currentTime: "2026-01-01T00:00:00Z" }),
     ).resolves.toBe(true);
@@ -105,9 +107,9 @@ describe("validateSchema()", () => {
     await expect(
       validateSchema({ ...spec, currentTime: "2026-01-01T00:00:00" }),
     ).rejects.toThrow(/EIDOS spec validation failed/);
-    await expect(validateSchema({ ...spec, currentTime: "yesterday" })).rejects.toThrow(
-      /EIDOS spec validation failed/,
-    );
+    await expect(
+      validateSchema({ ...spec, currentTime: "yesterday" }),
+    ).rejects.toThrow(/EIDOS spec validation failed/);
   });
 
   it("rejects a spec that violates the schema — validation is not a no-op", async () => {

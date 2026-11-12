@@ -43,7 +43,7 @@ const validateSchema = async (spec: any): Promise<boolean> => {
     const errorMessages = validator.errors
       .map(
         (error: any) =>
-          `${error.instancePath || "root"}: ${error.message} (${JSON.stringify(error.params || {})})`
+          `${error.instancePath || "root"}: ${error.message} (${JSON.stringify(error.params || {})})`,
       )
       .join("; ");
 

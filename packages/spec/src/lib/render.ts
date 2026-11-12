@@ -1,7 +1,7 @@
-import { proxy, subscribe, snapshot, Proxy } from 'valtio/vanilla';
-import { validateSchema } from './eidosmodel';
-import { EidosSpec } from '../schema/interfaces';
-import { MINOR_VERSION } from './version';
+import { proxy, subscribe, snapshot, Proxy } from "valtio/vanilla";
+import { validateSchema } from "./eidosmodel";
+import { EidosSpec } from "../schema/interfaces";
+import { MINOR_VERSION } from "./version";
 
 const DEFAULT_RENDERER = `https://render.eidos.oceanum.io/v${MINOR_VERSION}/index.html`;
 
@@ -51,23 +51,29 @@ const render = async (
   spec: EidosSpec,
   options: RenderOptions = {},
 ): Promise<RenderResult> => {
-  const { id, eventListener, renderer = DEFAULT_RENDERER, authToken, onChange } = options;
+  const {
+    id,
+    eventListener,
+    renderer = DEFAULT_RENDERER,
+    authToken,
+    onChange,
+  } = options;
 
   // Check if this container is already initialized
   // We check both for an existing iframe and a marker on the container itself
   // This prevents double-mounting even if destroy() was called but the container is being reused
-  const existingIframe = element.querySelector('iframe[data-eidos-renderer]');
+  const existingIframe = element.querySelector("iframe[data-eidos-renderer]");
   const isInitialized =
-    element.getAttribute('data-eidos-initialized') === 'true';
+    element.getAttribute("data-eidos-initialized") === "true";
 
   if (existingIframe || isInitialized) {
     throw new Error(
-      'EIDOS renderer already mounted in this container. Call destroy() before re-rendering.',
+      "EIDOS renderer already mounted in this container. Call destroy() before re-rendering.",
     );
   }
 
   // Mark container as initialized
-  element.setAttribute('data-eidos-initialized', 'true');
+  element.setAttribute("data-eidos-initialized", "true");
 
   // Validate the spec before creating proxy
   try {
@@ -75,7 +81,7 @@ const render = async (
   } catch (e: any) {
     // Clear the marker so the container can be retried; otherwise every later
     // render() in this element is refused as already mounted.
-    element.removeAttribute('data-eidos-initialized');
+    element.removeAttribute("data-eidos-initialized");
     throw new Error(`Invalid Eidos Spec: ${e.message}`);
   }
 
@@ -84,13 +90,13 @@ const render = async (
   const _id = id || spec.id;
 
   return new Promise((resolve, reject) => {
-    const iframe = document.createElement('iframe');
+    const iframe = document.createElement("iframe");
     iframe.src = `${renderer}?id=${_id}`;
-    iframe.width = '100%';
-    iframe.height = '100%';
-    iframe.frameBorder = '0';
+    iframe.width = "100%";
+    iframe.height = "100%";
+    iframe.frameBorder = "0";
     // Mark this as an EIDOS iframe for duplicate detection
-    iframe.setAttribute('data-eidos-renderer', 'true');
+    iframe.setAttribute("data-eidos-renderer", "true");
     element.appendChild(iframe);
 
     let messageHandler: ((event: MessageEvent) => void) | null = null;
@@ -104,21 +110,25 @@ const render = async (
         token: string | (() => string | Promise<string>),
       ) => {
         const resolvedToken =
-          typeof token === 'function' ? await token() : token;
+          typeof token === "function" ? await token() : token;
         win?.postMessage(
           {
             id: _id,
-            type: 'auth',
+            type: "auth",
             payload: resolvedToken,
           },
-          '*',
+          "*",
         );
       };
 
       messageHandler = (event: MessageEvent) => {
         // Debug: log all messages from iframe
         if (event.source === win && event.data?.type) {
-          console.log('[EIDOS] Message from renderer:', event.data.type, event.data);
+          console.log(
+            "[EIDOS] Message from renderer:",
+            event.data.type,
+            event.data,
+          );
         }
 
         if (event.source !== win) return;
@@ -127,7 +137,7 @@ const render = async (
         // Some EIDOS renderers may not include ID in event messages
         if (event.data.id && event.data.id !== _id) return;
 
-        if (event.data.type === 'init') {
+        if (event.data.type === "init") {
           // Send initial spec. Snapshot first: the valtio proxy itself is
           // not structured-cloneable (postMessage/structuredClone throw
           // DataCloneError on any Proxy), so cloning `eidos` directly made
@@ -135,10 +145,10 @@ const render = async (
           win?.postMessage(
             {
               id: _id,
-              type: 'spec',
+              type: "spec",
               payload: snapshot(eidos),
             },
-            '*',
+            "*",
           );
           // Send auth token on init if provided
           if (authToken) {
@@ -149,7 +159,7 @@ const render = async (
           eventListener?.(event.data);
         }
       };
-      window.addEventListener('message', messageHandler);
+      window.addEventListener("message", messageHandler);
 
       // Subscribe to changes and send patches to renderer
       unsubscribe = subscribe(eidos, () => {
@@ -159,10 +169,10 @@ const render = async (
         win?.postMessage(
           {
             id: _id,
-            type: 'spec',
+            type: "spec",
             payload: currentSnapshot,
           },
-          '*',
+          "*",
         );
 
         // Notify parent of changes (for Yjs sync, etc.)
@@ -175,7 +185,7 @@ const render = async (
       }
 
       const triggerAction = (payload: unknown) => {
-        win?.postMessage({ id: _id, type: 'event', payload }, '*');
+        win?.postMessage({ id: _id, type: "event", payload }, "*");
       };
 
       resolve({
@@ -185,14 +195,14 @@ const render = async (
         iframe,
         destroy: () => {
           if (messageHandler) {
-            window.removeEventListener('message', messageHandler);
+            window.removeEventListener("message", messageHandler);
           }
           if (unsubscribe) {
             unsubscribe();
           }
           iframe.remove();
           // Clear the initialization marker when explicitly destroyed
-          element.removeAttribute('data-eidos-initialized');
+          element.removeAttribute("data-eidos-initialized");
         },
       });
     };
@@ -202,8 +212,8 @@ const render = async (
       // otherwise the data-eidos-initialized guard rejects every
       // subsequent render() in this element.
       iframe.remove();
-      element.removeAttribute('data-eidos-initialized');
-      reject(new Error('Failed to load EIDOS renderer'));
+      element.removeAttribute("data-eidos-initialized");
+      reject(new Error("Failed to load EIDOS renderer"));
     };
   });
 };
