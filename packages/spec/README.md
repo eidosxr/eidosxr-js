@@ -42,7 +42,8 @@ function App() {
     <EidosProvider
       initialSpec={initialSpec}
       options={{
-        renderer: "https://render.eidos.oceanum.io",
+        // `renderer` defaults to the renderer of this package's EIDOS
+        // version; only set it to use another renderer.
         eventListener: (event) => console.log("Event:", event),
       }}
     >
@@ -89,7 +90,6 @@ const spec = {
 // Render in a container element
 const container = document.getElementById("eidos-container");
 const result = await render(container, spec, {
-  renderer: "https://render.eidos.oceanum.io",
   eventListener: (event) => {
     console.log("Received event:", event);
   },
@@ -124,7 +124,6 @@ function App() {
       {/* Map view */}
       <EidosProvider
         initialSpec={mapSpec}
-        options={{ renderer: EIDOS_URL }}
       >
         <MapControls />
       </EidosProvider>
@@ -132,7 +131,6 @@ function App() {
       {/* Chart view */}
       <EidosProvider
         initialSpec={chartSpec}
-        options={{ renderer: EIDOS_URL }}
       >
         <ChartControls />
       </EidosProvider>
@@ -174,8 +172,8 @@ function MultiInstance() {
 
   useEffect(() => {
     const init = async () => {
-      const map = await render(container1.current, mapSpec, { renderer: EIDOS_URL });
-      const chart = await render(container2.current, chartSpec, { renderer: EIDOS_URL });
+      const map = await render(container1.current, mapSpec);
+      const chart = await render(container2.current, chartSpec);
 
       setSpecs({ map: map.spec, chart: chart.spec });
 
@@ -233,6 +231,7 @@ Renders an EIDOS iframe and provides the spec proxy to all child components via 
   - `renderer` (string): URL of the EIDOS renderer (default: the renderer of this package's EIDOS version, e.g. `https://render.eidos.oceanum.io/v0.12/index.html`)
   - `eventListener` (function): Callback for events from the renderer
   - `authToken` (string | function): Authentication token for data fetching
+  - `onReady`, `onError`, `readyTimeout`, `debug`: as for [`render()`](#renderelement-spec-options)
 - `containerStyle` (optional): CSS styles for the iframe container (default: `{ width: '100%', height: '100%', position: 'absolute' }`)
 - `onInitialized` (optional): Callback called with the spec proxy after initialization
 
@@ -241,7 +240,6 @@ Renders an EIDOS iframe and provides the spec proxy to all child components via 
 <EidosProvider
   initialSpec={mySpec}
   options={{
-    renderer: "https://render.eidos.oceanum.io",
     eventListener: (event) => console.log(event),
   }}
   containerStyle={{ width: '100vw', height: '100vh' }}
@@ -289,28 +287,52 @@ Low-level function to render EIDOS in a DOM element. Use this for vanilla JavaSc
 - `element` (HTMLElement): Container element for the iframe
 - `spec` (EidosSpec): The EIDOS specification
 - `options` (RenderOptions): Configuration options
-  - `renderer` (string): Renderer URL
+  - `renderer` (string): Renderer URL (default: the renderer of this package's EIDOS version, e.g. `https://render.eidos.oceanum.io/v0.12/index.html`). A custom URL should be versioned the same way.
   - `eventListener` (function): Event callback
   - `authToken` (string | function): Auth token
   - `id` (string): Optional override for spec ID
+  - `onChange` (function): Called with a snapshot whenever the spec proxy changes
+  - `onReady` (function): Called once the renderer is ready, just before the promise resolves
+  - `onError` (function): Called with the `EidosRenderError` the promise rejects with
+  - `readyTimeout` (number): Milliseconds to wait for the renderer to report ready (default `30000`; `0` waits indefinitely)
+  - `debug` (boolean): Log every message from the renderer to the console
 
-**Returns:** `Promise<RenderResult>`
+**Returns:** `Promise<RenderResult>`, resolved once the renderer reports ready (its first `init` or `status` message) and the spec has been validated
 - `spec`: The reactive spec proxy
 - `iframe`: The iframe element
 - `updateAuth(token)`: Function to update auth token
 - `destroy()`: Cleanup function
 
+The iframe is created straight away and the spec is validated alongside it, against
+the schemas of this package's EIDOS version. If the schemas cannot be loaded (for
+example, `schemas.oceanum.io` is unreachable), the spec is rendered unvalidated and
+a warning is logged.
+
+**Rejects** with an `EidosRenderError`, whose `kind` is:
+- `"load"`: the renderer iframe failed to load
+- `"timeout"`: the renderer did not report ready within `readyTimeout`
+- `"validation"`: the spec does not satisfy the EIDOS schema (the message starts with `Invalid Eidos Spec:`)
+
+On failure the iframe is removed and the container is freed, so `render()` can be
+retried in it.
+
+Messages to the renderer, including the auth token, are posted to the renderer's
+origin rather than to `"*"`. Only for a renderer URL without an origin of its own,
+such as a `data:` URL, are they posted to `"*"`.
+
 **Example:**
 ```javascript
-const result = await render(container, spec, {
-  renderer: EIDOS_URL,
-  eventListener: (e) => console.log(e),
-});
-
-result.spec.data.push(newData);
-
-// Clean up
-result.destroy();
+try {
+  const result = await render(container, spec, {
+    eventListener: (e) => console.log(e),
+  });
+  result.spec.data.push(newData);
+  // Clean up
+  result.destroy();
+} catch (e) {
+  // An EidosRenderError: e.kind is "load", "timeout" or "validation"
+  console.error(e.message);
+}
 ```
 
 ### Additional Documentation
