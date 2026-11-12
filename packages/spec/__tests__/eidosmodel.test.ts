@@ -55,10 +55,43 @@ describe("validateSchema()", () => {
       "fetch",
       vi.fn(async () => ({ ok: false, status: 404, json: async () => ({}) })),
     );
-    const { validateSchema } = await import("../src/lib/eidosmodel");
-    await expect(validateSchema({ id: "x", name: "x" })).rejects.toThrow(
-      "Loading error: 404",
+    const { validateSchema, SchemaUnavailableError } =
+      await import("../src/lib/eidosmodel");
+    const result = validateSchema({ id: "x", name: "x" });
+    await expect(result).rejects.toThrow("Loading error: 404");
+    // A load failure is told apart from an invalid spec, so render() can
+    // treat it as a warning rather than a spec error.
+    await expect(result).rejects.toBeInstanceOf(SchemaUnavailableError);
+  });
+
+  it("reports an unreachable schema host as unavailable, not as a spec error", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () => {
+        throw new TypeError("Failed to fetch");
+      }),
     );
+    const { validateSchema, SchemaUnavailableError } =
+      await import("../src/lib/eidosmodel");
+    const result = validateSchema({ id: "x", name: "x" });
+    await expect(result).rejects.toBeInstanceOf(SchemaUnavailableError);
+    await expect(result).rejects.toThrow(
+      "EIDOS schemas could not be loaded: Failed to fetch",
+    );
+  });
+
+  it("bounds each schema request with an abort signal", async () => {
+    const fetchSpy = vi.fn(async (uri: string, _init?: RequestInit) => ({
+      ok: true,
+      status: 200,
+      json: async () => schemas[uri],
+    }));
+    vi.stubGlobal("fetch", fetchSpy);
+    const { validateSchema } = await import("../src/lib/eidosmodel");
+    await validateSchema({ id: "ok", name: "OK" });
+    for (const [, init] of fetchSpy.mock.calls) {
+      expect(init?.signal).toBeInstanceOf(AbortSignal);
+    }
   });
 
   it("loads the root schema from this package's versioned path", async () => {
@@ -84,7 +117,7 @@ describe("validateSchema()", () => {
       validateSchema({ id: "ok", name: "OK", root: { nodeType: "world" } }),
     ).resolves.toBe(true);
     // The $ref child schema must have been fetched through the loader.
-    expect(goodFetch).toHaveBeenCalledWith(CHILD);
+    expect(goodFetch).toHaveBeenCalledWith(CHILD, expect.anything());
   });
 
   it("checks formats, so a duration is not also taken for a date-time", async () => {
